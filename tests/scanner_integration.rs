@@ -4,7 +4,7 @@ use std::path::Path;
 use mano::{Mano, ManoError};
 
 #[test]
-fn scans_simple_expression() {
+fn parses_simple_expression() {
     let mut mano = Mano::new();
     let mut stdout = Vec::new();
     let mut stderr = Vec::new();
@@ -13,44 +13,59 @@ fn scans_simple_expression() {
 
     assert!(result.is_ok());
     let output = String::from_utf8(stdout).unwrap();
-    let lines: Vec<&str> = output.lines().collect();
-    assert!(lines[0].starts_with("LeftParen"));
-    assert!(lines[1].starts_with("Number") && lines[1].contains("1"));
-    assert!(lines[2].starts_with("Plus"));
-    assert!(lines[3].starts_with("Number") && lines[3].contains("2"));
-    assert!(lines[4].starts_with("RightParen"));
-    assert!(lines[5].starts_with("Eof"));
+    assert_eq!(output.trim(), "(group (+ 1 2))");
 }
 
 #[test]
-fn scans_mano_keywords() {
+fn parses_comparison_operators() {
     let mut mano = Mano::new();
     let mut stdout = Vec::new();
     let mut stderr = Vec::new();
 
-    let result = mano.run_with_output("seLiga x = firmeza;", &mut stdout, &mut stderr);
+    let result = mano.run_with_output("1 < 2", &mut stdout, &mut stderr);
 
     assert!(result.is_ok());
     let output = String::from_utf8(stdout).unwrap();
-    let lines: Vec<&str> = output.lines().collect();
-    assert!(lines[0].starts_with("Var") && lines[0].contains("seLiga"));
-    assert!(lines[1].starts_with("Identifier") && lines[1].contains("x"));
-    assert!(lines[2].starts_with("Equal"));
-    assert!(lines[3].starts_with("True") && lines[3].contains("firmeza"));
-    assert!(lines[4].starts_with("Semicolon"));
+    assert_eq!(output.trim(), "(< 1 2)");
 }
 
 #[test]
-fn scans_string_with_unicode() {
+fn parses_equality_operators() {
     let mut mano = Mano::new();
     let mut stdout = Vec::new();
     let mut stderr = Vec::new();
 
-    let result = mano.run_with_output("salve \"e aí mano, beleza?\";", &mut stdout, &mut stderr);
+    let result = mano.run_with_output("1 == 2", &mut stdout, &mut stderr);
 
     assert!(result.is_ok());
     let output = String::from_utf8(stdout).unwrap();
-    assert!(output.contains("e aí mano, beleza?"));
+    assert_eq!(output.trim(), "(== 1 2)");
+}
+
+#[test]
+fn parses_unary_operators() {
+    let mut mano = Mano::new();
+    let mut stdout = Vec::new();
+    let mut stderr = Vec::new();
+
+    let result = mano.run_with_output("-42", &mut stdout, &mut stderr);
+
+    assert!(result.is_ok());
+    let output = String::from_utf8(stdout).unwrap();
+    assert_eq!(output.trim(), "(- 42)");
+}
+
+#[test]
+fn parses_boolean_literals() {
+    let mut mano = Mano::new();
+    let mut stdout = Vec::new();
+    let mut stderr = Vec::new();
+
+    let result = mano.run_with_output("firmeza", &mut stdout, &mut stderr);
+
+    assert!(result.is_ok());
+    let output = String::from_utf8(stdout).unwrap();
+    assert_eq!(output.trim(), "firmeza");
 }
 
 #[test]
@@ -74,24 +89,18 @@ fn continues_scanning_after_error() {
     let mut stderr = Vec::new();
 
     // Both @ and $ are invalid - should scan all, not stop at first
-    let result = mano.run_with_output("(@$)", &mut stdout, &mut stderr);
+    let result = mano.run_with_output("@$", &mut stdout, &mut stderr);
 
     assert!(result.is_ok());
     let errors = String::from_utf8(stderr).unwrap();
     assert!(errors.contains("@"));
     assert!(errors.contains("$"));
-
-    // And we still got the valid tokens
-    let output = String::from_utf8(stdout).unwrap();
-    assert!(output.contains("LeftParen"));
-    assert!(output.contains("RightParen"));
 }
 
 #[test]
 fn runs_file_with_mano_code() {
     let mut file = tempfile::NamedTempFile::new().unwrap();
-    writeln!(file, "seLiga nome = \"mano\";").unwrap();
-    writeln!(file, "salve nome;").unwrap();
+    writeln!(file, "1 + 2").unwrap();
 
     let mut mano = Mano::new();
     let result = mano.run_file(file.path());
@@ -106,69 +115,30 @@ fn returns_io_error_for_missing_file() {
 }
 
 #[test]
-fn scans_all_operators() {
+fn parses_complex_expression() {
     let mut mano = Mano::new();
     let mut stdout = Vec::new();
     let mut stderr = Vec::new();
 
-    let result = mano.run_with_output("! != = == < <= > >=", &mut stdout, &mut stderr);
+    let result = mano.run_with_output("1 + 2 * 3", &mut stdout, &mut stderr);
 
     assert!(result.is_ok());
     let output = String::from_utf8(stdout).unwrap();
-    let lines: Vec<&str> = output.lines().collect();
-    assert!(lines[0].starts_with("Bang "));
-    assert!(lines[1].starts_with("BangEqual"));
-    assert!(lines[2].starts_with("Equal "));
-    assert!(lines[3].starts_with("EqualEqual"));
-    assert!(lines[4].starts_with("Less "));
-    assert!(lines[5].starts_with("LessEqual"));
-    assert!(lines[6].starts_with("Greater "));
-    assert!(lines[7].starts_with("GreaterEqual"));
+    // Should respect precedence: 1 + (2 * 3)
+    assert_eq!(output.trim(), "(+ 1 (* 2 3))");
 }
 
 #[test]
-fn scans_number_literals() {
+fn parses_string_literal() {
     let mut mano = Mano::new();
     let mut stdout = Vec::new();
     let mut stderr = Vec::new();
 
-    let result = mano.run_with_output("123 45.67", &mut stdout, &mut stderr);
+    let result = mano.run_with_output("\"e aí mano\"", &mut stdout, &mut stderr);
 
     assert!(result.is_ok());
     let output = String::from_utf8(stdout).unwrap();
-    assert!(output.contains("Number") && output.contains("123"));
-    assert!(output.contains("45.67"));
-}
-
-#[test]
-fn handles_comments() {
-    let mut mano = Mano::new();
-    let mut stdout = Vec::new();
-    let mut stderr = Vec::new();
-
-    let result = mano.run_with_output("( // isso é um comentário\n)", &mut stdout, &mut stderr);
-
-    assert!(result.is_ok());
-    let output = String::from_utf8(stdout).unwrap();
-    // Comment should NOT appear in output
-    assert!(!output.contains("comentário"));
-    // But the parentheses should
-    assert!(output.contains("LeftParen"));
-    assert!(output.contains("RightParen"));
-}
-
-#[test]
-fn handles_multiline_string() {
-    let mut mano = Mano::new();
-    let mut stdout = Vec::new();
-    let mut stderr = Vec::new();
-
-    let result = mano.run_with_output("\"linha 1\nlinha 2\"", &mut stdout, &mut stderr);
-
-    assert!(result.is_ok());
-    let output = String::from_utf8(stdout).unwrap();
-    assert!(output.contains("linha 1"));
-    assert!(output.contains("linha 2"));
+    assert_eq!(output.trim(), "e aí mano");
 }
 
 #[test]

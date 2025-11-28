@@ -58,6 +58,8 @@ impl<'a> Iterator for Scanner<'a> {
                 '-' => return Some(Ok(self.add_token(TokenType::Minus))),
                 '+' => return Some(Ok(self.add_token(TokenType::Plus))),
                 ';' => return Some(Ok(self.add_token(TokenType::Semicolon))),
+                '?' => return Some(Ok(self.add_token(TokenType::Question))),
+                ':' => return Some(Ok(self.add_token(TokenType::Colon))),
                 // Slash or comment
                 '/' => {
                     if self.match_char('/') {
@@ -340,7 +342,7 @@ mod tests {
 
     #[test]
     fn scans_all_single_char_tokens() {
-        let mut scanner = Scanner::new("(){},.-+;*/");
+        let mut scanner = Scanner::new("(){},.-+;?:*/");
 
         assert_eq!(
             scanner.next().unwrap().unwrap().token_type,
@@ -372,12 +374,44 @@ mod tests {
             scanner.next().unwrap().unwrap().token_type,
             TokenType::Semicolon
         );
+        assert_eq!(
+            scanner.next().unwrap().unwrap().token_type,
+            TokenType::Question
+        );
+        assert_eq!(
+            scanner.next().unwrap().unwrap().token_type,
+            TokenType::Colon
+        );
         assert_eq!(scanner.next().unwrap().unwrap().token_type, TokenType::Star);
         assert_eq!(
             scanner.next().unwrap().unwrap().token_type,
             TokenType::Slash
         );
         assert_eq!(scanner.next().unwrap().unwrap().token_type, TokenType::Eof);
+    }
+
+    #[test]
+    fn scans_equal() {
+        let mut scanner = Scanner::new("=");
+        let token = scanner.next().unwrap().unwrap();
+        assert_eq!(token.token_type, TokenType::Equal);
+        assert_eq!(token.lexeme, "=");
+    }
+
+    #[test]
+    fn scans_less() {
+        let mut scanner = Scanner::new("<");
+        let token = scanner.next().unwrap().unwrap();
+        assert_eq!(token.token_type, TokenType::Less);
+        assert_eq!(token.lexeme, "<");
+    }
+
+    #[test]
+    fn scans_greater() {
+        let mut scanner = Scanner::new(">");
+        let token = scanner.next().unwrap().unwrap();
+        assert_eq!(token.token_type, TokenType::Greater);
+        assert_eq!(token.lexeme, ">");
     }
 
     #[test]

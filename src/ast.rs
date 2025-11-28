@@ -10,6 +10,11 @@ pub enum Expr {
         operator: Token,
         right: Box<Expr>,
     },
+    Ternary {
+        condition: Box<Expr>,
+        then_branch: Box<Expr>,
+        else_branch: Box<Expr>,
+    },
     Unary {
         operator: Token,
         right: Box<Expr>,
@@ -30,6 +35,11 @@ impl fmt::Display for Expr {
                 operator,
                 right,
             } => write!(f, "({} {} {})", operator.lexeme, left, right),
+            Expr::Ternary {
+                condition,
+                then_branch,
+                else_branch,
+            } => write!(f, "(?: {} {} {})", condition, then_branch, else_branch),
             Expr::Unary { operator, right } => write!(f, "({} {})", operator.lexeme, right),
             Expr::Literal { value } => write!(f, "{}", value),
             Expr::Grouping { expression } => write!(f, "(group {})", expression),
@@ -165,5 +175,22 @@ mod tests {
         };
 
         assert_eq!(expr.to_string(), "(* (- 123) (group 45.67))");
+    }
+
+    #[test]
+    fn displays_ternary_expression() {
+        let expr = Expr::Ternary {
+            condition: Box::new(Expr::Literal {
+                value: Value::Bool(true),
+            }),
+            then_branch: Box::new(Expr::Literal {
+                value: Value::Number(1.0),
+            }),
+            else_branch: Box::new(Expr::Literal {
+                value: Value::Number(2.0),
+            }),
+        };
+
+        assert_eq!(expr.to_string(), "(?: firmeza 1 2)");
     }
 }

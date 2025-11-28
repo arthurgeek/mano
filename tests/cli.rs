@@ -14,7 +14,7 @@ fn runs_file_successfully() {
 }
 
 #[test]
-fn prints_tokens_from_file() {
+fn prints_ast_from_file() {
     let mut file = tempfile::NamedTempFile::new().unwrap();
     writeln!(file, "(1 + 2)").unwrap();
 
@@ -22,9 +22,7 @@ fn prints_tokens_from_file() {
         .arg(file.path())
         .assert()
         .success()
-        .stdout(predicates::str::contains("LeftParen"))
-        .stdout(predicates::str::contains("Number"))
-        .stdout(predicates::str::contains("Plus"));
+        .stdout(predicates::str::contains("(group (+ 1 2))"));
 }
 
 #[test]
@@ -55,11 +53,10 @@ fn repl_exits_on_eof() {
 }
 
 #[test]
-fn repl_processes_input() {
+fn repl_parses_expression() {
     mano()
-        .write_stdin("()\n")
+        .write_stdin("1 + 2\n")
         .assert()
         .success()
-        .stdout(predicates::str::contains("LeftParen"))
-        .stdout(predicates::str::contains("RightParen"));
+        .stdout(predicates::str::contains("(+ 1 2)"));
 }

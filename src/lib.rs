@@ -1,5 +1,6 @@
 mod ast;
 mod error;
+mod parser;
 mod scanner;
 mod token;
 
@@ -60,13 +61,27 @@ impl Mano {
     ) -> Result<(), ManoError> {
         let scanner = scanner::Scanner::new(source);
 
+        let mut tokens = Vec::new();
         for result in scanner {
             match result {
-                Ok(token) => writeln!(stdout, "{}", token)?,
+                Ok(token) => tokens.push(token),
                 Err(e) => {
                     self.had_error = true;
                     writeln!(stderr, "{}", e)?;
                 }
+            }
+        }
+
+        if self.had_error {
+            return Ok(());
+        }
+
+        let mut parser = parser::Parser::new(tokens);
+        match parser.parse() {
+            Ok(expr) => writeln!(stdout, "{}", expr)?,
+            Err(e) => {
+                self.had_error = true;
+                writeln!(stderr, "{}", e)?;
             }
         }
 
@@ -87,9 +102,9 @@ mod tests {
     }
 
     #[test]
-    fn run_scans_tokens() {
+    fn run_parses_valid_expression() {
         let mut mano = Mano::new();
-        let result = mano.run("()");
+        let result = mano.run("42");
         assert!(result.is_ok());
         assert!(!mano.had_error);
     }
@@ -143,20 +158,16 @@ mod tests {
     }
 
     #[test]
-    fn run_outputs_tokens_to_stdout() {
+    fn run_parses_and_outputs_ast() {
         let mut mano = Mano::new();
         let mut stdout = Vec::new();
         let mut stderr = Vec::new();
 
-        let result = mano.run_with_output("()", &mut stdout, &mut stderr);
+        let result = mano.run_with_output("1 + 2", &mut stdout, &mut stderr);
 
         assert!(result.is_ok());
         let output = String::from_utf8(stdout).unwrap();
-        let lines: Vec<&str> = output.lines().collect();
-        assert_eq!(lines.len(), 3);
-        assert!(lines[0].starts_with("LeftParen"));
-        assert!(lines[1].starts_with("RightParen"));
-        assert!(lines[2].starts_with("Eof"));
+        assert_eq!(output.trim(), "(+ 1 2)");
     }
 
     #[test]

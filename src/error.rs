@@ -13,6 +13,9 @@ pub enum ManoError {
 
     #[error("[linha {line}] Ô lesado, esqueceu de fechar o comentário!")]
     UnterminatedBlockComment { line: usize },
+
+    #[error("[linha {line}] Deu ruim, parça: {message}")]
+    Parse { line: usize, message: String },
 }
 
 #[cfg(test)]
@@ -43,6 +46,18 @@ mod tests {
         assert_eq!(
             err.to_string(),
             "[linha 3] E esse '@' aí, mano? Tá inventando?"
+        );
+    }
+
+    #[test]
+    fn parse_error_roasts_user() {
+        let err = ManoError::Parse {
+            line: 5,
+            message: "Cadê o fecha parênteses?".to_string(),
+        };
+        assert_eq!(
+            err.to_string(),
+            "[linha 5] Deu ruim, parça: Cadê o fecha parênteses?"
         );
     }
 }

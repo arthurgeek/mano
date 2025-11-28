@@ -6,7 +6,8 @@
       "WebFetch(domain:craftinginterpreters.com)",
       "Bash(cargo test:*)",
       "Bash(cargo clippy:*)",
-      "Bash(cargo fmt:*)"
+      "Bash(cargo fmt:*)",
+      "Bash(cargo tarpaulin:*)"
     ]
   },
   "enableAllProjectMcpServers": true,
