@@ -225,6 +225,8 @@ impl<'a> Scanner<'a> {
     }
 
     fn string(&mut self) -> Result<Token, ManoError> {
+        let start_line = self.line;
+
         // Consume characters until closing quote
         while self.peek() != Some('"') && !self.is_at_end() {
             if self.peek() == Some('\n') {
@@ -234,7 +236,7 @@ impl<'a> Scanner<'a> {
         }
 
         if self.is_at_end() {
-            return Err(ManoError::UnterminatedString { line: self.line });
+            return Err(ManoError::UnterminatedString { line: start_line });
         }
 
         // Consume the closing "
@@ -549,6 +551,19 @@ mod tests {
     #[test]
     fn unterminated_string_returns_error() {
         let mut scanner = Scanner::new("\"esqueceu de fechar");
+        let result = scanner.next().unwrap();
+
+        assert!(result.is_err());
+        assert!(matches!(
+            result.unwrap_err(),
+            ManoError::UnterminatedString { line: 1 }
+        ));
+    }
+
+    #[test]
+    fn unterminated_string_reports_starting_line() {
+        // String starts on line 1, spans 3 lines, error should report line 1
+        let mut scanner = Scanner::new("\"começou aqui\ne continua\ne nunca fecha");
         let result = scanner.next().unwrap();
 
         assert!(result.is_err());

@@ -2,10 +2,10 @@ use thiserror::Error;
 
 #[derive(Debug, Error)]
 pub enum ManoError {
-    #[error("Aí vacilou, mano! Cadê o arquivo?")]
+    #[error("Pô, véi! Cadê o arquivo?")]
     Io(#[from] std::io::Error),
 
-    #[error("[linha {line}] E esse '{lexeme}' aí, mano? Tá inventando?")]
+    #[error("[linha {line}] E esse '{lexeme}' aí, truta? Tá na nóia?")]
     UnexpectedCharacter { line: usize, lexeme: char },
 
     #[error("[linha {line}] Tá moscando, Brown? Cadê o fecha aspas!")]
@@ -14,8 +14,11 @@ pub enum ManoError {
     #[error("[linha {line}] Ô lesado, esqueceu de fechar o comentário!")]
     UnterminatedBlockComment { line: usize },
 
-    #[error("[linha {line}] Deu ruim, parça: {message}")]
+    #[error("[linha {line}] Deu mole, cumpadi: {message}")]
     Parse { line: usize, message: String },
+
+    #[error("[linha {line}] Deu ruim na execução, brother: {message}")]
+    Runtime { line: usize, message: String },
 }
 
 #[cfg(test)]
@@ -34,7 +37,7 @@ mod tests {
     fn io_error_roasts_user() {
         let io_err = Error::new(ErrorKind::NotFound, "file not found");
         let mano_err: ManoError = io_err.into();
-        assert_eq!(mano_err.to_string(), "Aí vacilou, mano! Cadê o arquivo?");
+        assert_eq!(mano_err.to_string(), "Pô, véi! Cadê o arquivo?");
     }
 
     #[test]
@@ -45,7 +48,7 @@ mod tests {
         };
         assert_eq!(
             err.to_string(),
-            "[linha 3] E esse '@' aí, mano? Tá inventando?"
+            "[linha 3] E esse '@' aí, truta? Tá na nóia?"
         );
     }
 
@@ -57,7 +60,19 @@ mod tests {
         };
         assert_eq!(
             err.to_string(),
-            "[linha 5] Deu ruim, parça: Cadê o fecha parênteses?"
+            "[linha 5] Deu mole, cumpadi: Cadê o fecha parênteses?"
+        );
+    }
+
+    #[test]
+    fn runtime_error_roasts_user() {
+        let err = ManoError::Runtime {
+            line: 7,
+            message: "Só dá pra negar número, chapa!".to_string(),
+        };
+        assert_eq!(
+            err.to_string(),
+            "[linha 7] Deu ruim na execução, brother: Só dá pra negar número, chapa!"
         );
     }
 }

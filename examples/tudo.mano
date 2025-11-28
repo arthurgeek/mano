@@ -1,0 +1,64 @@
+// Tudo que o mano sabe fazer (por enquanto)!
+
+// === Literais ===
+42              // numero inteiro
+3.14159         // numero decimal
+"e aí, truta!"  // string
+firmeza         // true
+treta           // false
+nadaNão         // nil
+
+// === Operadores unários ===
+-42             // negativo
+!firmeza        // negação (vira treta)
+!treta          // negação (vira firmeza)
+!!firmeza       // dupla negação
+
+// === Matemática básica ===
+1 + 2           // soma
+10 - 3          // subtração
+6 * 7           // multiplicação
+100 / 4         // divisão
+
+// === Expressões complexas ===
+(1 + 2) * 3     // agrupamento
+2 + 3 * 4       // precedência: 14
+-5 + 10         // unário com binário
+
+// === Comparações ===
+5 > 3           // maior
+3 < 5           // menor
+5 >= 5          // maior ou igual
+3 <= 3          // menor ou igual
+
+// === Igualdade ===
+42 == 42        // igual
+42 != 0         // diferente
+"mano" == "mano"
+firmeza == firmeza
+nadaNão == nadaNão
+
+// === Ternário ===
+firmeza ? 1 : 2           // se firmeza, 1, senão 2
+treta ? "sim" : "não"     // se treta, "sim", senão "não"
+5 > 3 ? "maior" : "menor" // com comparação
+
+// === Ternário aninhado (direita associativo) ===
+firmeza ? 1 : treta ? 2 : 3
+
+// === Expressão vírgula ===
+1, 2, 3         // retorna 3 (último valor)
+(1 + 1, 2 + 2, 3 + 3)  // retorna 6
+
+// === String concatenação ===
+"São Paulo " + "é nóis!"
+
+/*
+   Comentário de bloco
+   Pode ter várias linhas
+*/
+
+/* Comentários /* aninhados */ também funcionam! */
+
+// Expressão final pra mostrar que tá tudo certo
+(10 + 5) * 2 == 30 ? "firmeza total!" : "deu ruim"

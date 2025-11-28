@@ -4,7 +4,7 @@ use std::path::Path;
 use mano::{Mano, ManoError};
 
 #[test]
-fn parses_simple_expression() {
+fn evaluates_simple_expression() {
     let mut mano = Mano::new();
     let mut stdout = Vec::new();
     let mut stderr = Vec::new();
@@ -13,11 +13,11 @@ fn parses_simple_expression() {
 
     assert!(result.is_ok());
     let output = String::from_utf8(stdout).unwrap();
-    assert_eq!(output.trim(), "(group (+ 1 2))");
+    assert_eq!(output.trim(), "3");
 }
 
 #[test]
-fn parses_comparison_operators() {
+fn evaluates_comparison_operators() {
     let mut mano = Mano::new();
     let mut stdout = Vec::new();
     let mut stderr = Vec::new();
@@ -26,11 +26,11 @@ fn parses_comparison_operators() {
 
     assert!(result.is_ok());
     let output = String::from_utf8(stdout).unwrap();
-    assert_eq!(output.trim(), "(< 1 2)");
+    assert_eq!(output.trim(), "firmeza");
 }
 
 #[test]
-fn parses_equality_operators() {
+fn evaluates_equality_operators() {
     let mut mano = Mano::new();
     let mut stdout = Vec::new();
     let mut stderr = Vec::new();
@@ -39,11 +39,11 @@ fn parses_equality_operators() {
 
     assert!(result.is_ok());
     let output = String::from_utf8(stdout).unwrap();
-    assert_eq!(output.trim(), "(== 1 2)");
+    assert_eq!(output.trim(), "treta");
 }
 
 #[test]
-fn parses_unary_operators() {
+fn evaluates_unary_operators() {
     let mut mano = Mano::new();
     let mut stdout = Vec::new();
     let mut stderr = Vec::new();
@@ -52,7 +52,7 @@ fn parses_unary_operators() {
 
     assert!(result.is_ok());
     let output = String::from_utf8(stdout).unwrap();
-    assert_eq!(output.trim(), "(- 42)");
+    assert_eq!(output.trim(), "-42");
 }
 
 #[test]
@@ -79,7 +79,7 @@ fn reports_error_for_invalid_character() {
     assert!(result.is_ok());
     let errors = String::from_utf8(stderr).unwrap();
     assert!(errors.contains("@"));
-    assert!(errors.contains("Tá inventando"));
+    assert!(errors.contains("Tá na nóia"));
 }
 
 #[test]
@@ -115,7 +115,7 @@ fn returns_io_error_for_missing_file() {
 }
 
 #[test]
-fn parses_complex_expression() {
+fn evaluates_complex_expression() {
     let mut mano = Mano::new();
     let mut stdout = Vec::new();
     let mut stderr = Vec::new();
@@ -124,8 +124,8 @@ fn parses_complex_expression() {
 
     assert!(result.is_ok());
     let output = String::from_utf8(stdout).unwrap();
-    // Should respect precedence: 1 + (2 * 3)
-    assert_eq!(output.trim(), "(+ 1 (* 2 3))");
+    // Should respect precedence: 1 + (2 * 3) = 7
+    assert_eq!(output.trim(), "7");
 }
 
 #[test]

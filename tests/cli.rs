@@ -14,7 +14,7 @@ fn runs_file_successfully() {
 }
 
 #[test]
-fn prints_ast_from_file() {
+fn evaluates_expression_from_file() {
     let mut file = tempfile::NamedTempFile::new().unwrap();
     writeln!(file, "(1 + 2)").unwrap();
 
@@ -22,7 +22,7 @@ fn prints_ast_from_file() {
         .arg(file.path())
         .assert()
         .success()
-        .stdout(predicates::str::contains("(group (+ 1 2))"));
+        .stdout(predicates::str::contains("3"));
 }
 
 #[test]
@@ -45,18 +45,27 @@ fn exits_with_error_for_missing_file() {
 
 #[test]
 fn repl_exits_on_eof() {
-    mano()
-        .write_stdin("")
-        .assert()
-        .success()
-        .stdout(predicates::str::contains("> "));
+    // When stdin is piped and empty, rustyline returns EOF immediately
+    // without printing the prompt (non-tty behavior)
+    mano().write_stdin("").assert().success();
 }
 
 #[test]
-fn repl_parses_expression() {
+fn repl_evaluates_expression() {
     mano()
         .write_stdin("1 + 2\n")
         .assert()
         .success()
-        .stdout(predicates::str::contains("(+ 1 2)"));
+        .stdout(predicates::str::contains("3"));
+}
+
+#[test]
+fn repl_recovers_after_error() {
+    // Error on first line, second line should still work
+    mano()
+        .write_stdin("@\n1 + 2\n")
+        .assert()
+        .success()
+        .stderr(predicates::str::contains("Tá na nóia"))
+        .stdout(predicates::str::contains("3"));
 }

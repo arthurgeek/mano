@@ -12,8 +12,11 @@ impl Parser {
         Self { tokens, current: 0 }
     }
 
-    pub fn parse(&mut self) -> Result<Expr, ManoError> {
-        self.expression()
+    pub fn parse(&mut self) -> Result<Option<Expr>, ManoError> {
+        if self.is_at_end() {
+            return Ok(None);
+        }
+        self.expression().map(Some)
     }
 
     fn expression(&mut self) -> Result<Expr, ManoError> {
@@ -41,7 +44,7 @@ impl Parser {
 
         if self.match_types(&[TokenType::Question]) {
             let then_branch = self.expression()?;
-            self.consume(TokenType::Colon, "Cadê o ':' do ternário, mano?")?;
+            self.consume(TokenType::Colon, "Cadê o ':' do ternário, chapa?")?;
             let else_branch = self.ternary()?;
             return Ok(Expr::Ternary {
                 condition: Box::new(expr),
@@ -171,14 +174,14 @@ impl Parser {
             TokenType::LeftParen => {
                 self.advance();
                 let expr = self.expression()?;
-                self.consume(TokenType::RightParen, "Cadê o fecha parênteses, mano?")?;
+                self.consume(TokenType::RightParen, "Cadê o fecha parênteses, chegado?")?;
                 Ok(Expr::Grouping {
                     expression: Box::new(expr),
                 })
             }
             _ => Err(ManoError::Parse {
                 line: token.line,
-                message: "Cadê a expressão, mano?".to_string(),
+                message: "Cadê a expressão, jão?".to_string(),
             }),
         }
     }
@@ -265,6 +268,16 @@ mod tests {
         make_token(TokenType::Eof, "", None)
     }
 
+    // === empty input ===
+
+    #[test]
+    fn parse_eof_only_returns_none() {
+        let tokens = vec![eof()];
+        let mut parser = Parser::new(tokens);
+        let result = parser.parse().unwrap();
+        assert!(result.is_none());
+    }
+
     // === primary ===
 
     #[test]
@@ -274,7 +287,7 @@ mod tests {
             eof(),
         ];
         let mut parser = Parser::new(tokens);
-        let expr = parser.parse().unwrap();
+        let expr = parser.parse().unwrap().unwrap();
         assert!(matches!(expr, Expr::Literal { value: Value::Number(n) } if n == 42.0));
     }
 
@@ -289,7 +302,7 @@ mod tests {
             eof(),
         ];
         let mut parser = Parser::new(tokens);
-        let expr = parser.parse().unwrap();
+        let expr = parser.parse().unwrap().unwrap();
         assert!(matches!(expr, Expr::Literal { value: Value::String(ref s) } if s == "mano"));
     }
 
@@ -297,7 +310,7 @@ mod tests {
     fn parses_true_literal() {
         let tokens = vec![make_token(TokenType::True, "firmeza", None), eof()];
         let mut parser = Parser::new(tokens);
-        let expr = parser.parse().unwrap();
+        let expr = parser.parse().unwrap().unwrap();
         assert!(matches!(
             expr,
             Expr::Literal {
@@ -310,7 +323,7 @@ mod tests {
     fn parses_false_literal() {
         let tokens = vec![make_token(TokenType::False, "treta", None), eof()];
         let mut parser = Parser::new(tokens);
-        let expr = parser.parse().unwrap();
+        let expr = parser.parse().unwrap().unwrap();
         assert!(matches!(
             expr,
             Expr::Literal {
@@ -323,7 +336,7 @@ mod tests {
     fn parses_nil_literal() {
         let tokens = vec![make_token(TokenType::Nil, "nadaNão", None), eof()];
         let mut parser = Parser::new(tokens);
-        let expr = parser.parse().unwrap();
+        let expr = parser.parse().unwrap().unwrap();
         assert!(matches!(expr, Expr::Literal { value: Value::Nil }));
     }
 
@@ -336,7 +349,7 @@ mod tests {
             eof(),
         ];
         let mut parser = Parser::new(tokens);
-        let expr = parser.parse().unwrap();
+        let expr = parser.parse().unwrap().unwrap();
         assert!(matches!(expr, Expr::Grouping { .. }));
     }
 
@@ -350,7 +363,7 @@ mod tests {
             eof(),
         ];
         let mut parser = Parser::new(tokens);
-        let expr = parser.parse().unwrap();
+        let expr = parser.parse().unwrap().unwrap();
         assert!(matches!(expr, Expr::Unary { .. }));
     }
 
@@ -362,7 +375,7 @@ mod tests {
             eof(),
         ];
         let mut parser = Parser::new(tokens);
-        let expr = parser.parse().unwrap();
+        let expr = parser.parse().unwrap().unwrap();
         assert!(matches!(expr, Expr::Unary { .. }));
     }
 
@@ -377,7 +390,7 @@ mod tests {
             eof(),
         ];
         let mut parser = Parser::new(tokens);
-        let expr = parser.parse().unwrap();
+        let expr = parser.parse().unwrap().unwrap();
         assert!(matches!(expr, Expr::Binary { .. }));
     }
 
@@ -390,7 +403,7 @@ mod tests {
             eof(),
         ];
         let mut parser = Parser::new(tokens);
-        let expr = parser.parse().unwrap();
+        let expr = parser.parse().unwrap().unwrap();
         assert!(matches!(expr, Expr::Binary { .. }));
     }
 
@@ -405,7 +418,7 @@ mod tests {
             eof(),
         ];
         let mut parser = Parser::new(tokens);
-        let expr = parser.parse().unwrap();
+        let expr = parser.parse().unwrap().unwrap();
         assert!(matches!(expr, Expr::Binary { .. }));
     }
 
@@ -418,7 +431,7 @@ mod tests {
             eof(),
         ];
         let mut parser = Parser::new(tokens);
-        let expr = parser.parse().unwrap();
+        let expr = parser.parse().unwrap().unwrap();
         assert!(matches!(expr, Expr::Binary { .. }));
     }
 
@@ -433,7 +446,7 @@ mod tests {
             eof(),
         ];
         let mut parser = Parser::new(tokens);
-        let expr = parser.parse().unwrap();
+        let expr = parser.parse().unwrap().unwrap();
         assert!(matches!(expr, Expr::Binary { .. }));
     }
 
@@ -446,7 +459,7 @@ mod tests {
             eof(),
         ];
         let mut parser = Parser::new(tokens);
-        let expr = parser.parse().unwrap();
+        let expr = parser.parse().unwrap().unwrap();
         assert!(matches!(expr, Expr::Binary { .. }));
     }
 
@@ -461,7 +474,7 @@ mod tests {
             eof(),
         ];
         let mut parser = Parser::new(tokens);
-        let expr = parser.parse().unwrap();
+        let expr = parser.parse().unwrap().unwrap();
         assert!(matches!(expr, Expr::Binary { .. }));
     }
 
@@ -474,7 +487,7 @@ mod tests {
             eof(),
         ];
         let mut parser = Parser::new(tokens);
-        let expr = parser.parse().unwrap();
+        let expr = parser.parse().unwrap().unwrap();
         assert!(matches!(expr, Expr::Binary { .. }));
     }
 
@@ -511,7 +524,7 @@ mod tests {
             eof(),
         ];
         let mut parser = Parser::new(tokens);
-        let expr = parser.parse().unwrap();
+        let expr = parser.parse().unwrap().unwrap();
         assert!(matches!(expr, Expr::Binary { .. }));
         assert_eq!(expr.to_string(), "(, 1 2)");
     }
@@ -527,7 +540,7 @@ mod tests {
             eof(),
         ];
         let mut parser = Parser::new(tokens);
-        let expr = parser.parse().unwrap();
+        let expr = parser.parse().unwrap().unwrap();
         // Left associative: (1, 2), 3
         assert_eq!(expr.to_string(), "(, (, 1 2) 3)");
     }
@@ -546,7 +559,7 @@ mod tests {
             eof(),
         ];
         let mut parser = Parser::new(tokens);
-        let expr = parser.parse().unwrap();
+        let expr = parser.parse().unwrap().unwrap();
         assert!(matches!(expr, Expr::Ternary { .. }));
         assert_eq!(expr.to_string(), "(?: firmeza 1 2)");
     }
@@ -567,7 +580,7 @@ mod tests {
             eof(),
         ];
         let mut parser = Parser::new(tokens);
-        let expr = parser.parse().unwrap();
+        let expr = parser.parse().unwrap().unwrap();
         assert_eq!(expr.to_string(), "(?: firmeza 1 (?: treta 2 3))");
     }
 

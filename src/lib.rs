@@ -1,5 +1,6 @@
 mod ast;
 mod error;
+mod interpreter;
 mod parser;
 mod scanner;
 mod token;
@@ -25,6 +26,10 @@ impl Mano {
         Self { had_error: false }
     }
 
+    pub fn reset_error(&mut self) {
+        self.had_error = false;
+    }
+
     pub fn run_file(&mut self, file: &Path) -> Result<(), ManoError> {
         self.run(&fs::read_to_string(file)?)?;
         Ok(())
@@ -45,6 +50,7 @@ impl Mano {
             }
 
             self.run(&line)?;
+            self.had_error = false; // Reset for next REPL line
         }
         Ok(())
     }
@@ -77,8 +83,19 @@ impl Mano {
         }
 
         let mut parser = parser::Parser::new(tokens);
-        match parser.parse() {
-            Ok(expr) => writeln!(stdout, "{}", expr)?,
+        let expr = match parser.parse() {
+            Ok(Some(expr)) => expr,
+            Ok(None) => return Ok(()),
+            Err(e) => {
+                self.had_error = true;
+                writeln!(stderr, "{}", e)?;
+                return Ok(());
+            }
+        };
+
+        let mut interp = interpreter::Interpreter::new();
+        match interp.interpret(&expr) {
+            Ok(value) => writeln!(stdout, "{}", value)?,
             Err(e) => {
                 self.had_error = true;
                 writeln!(stderr, "{}", e)?;
@@ -99,6 +116,14 @@ mod tests {
         let mut mano = Mano::new();
         let result = mano.run("");
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn run_comment_only_succeeds() {
+        let mut mano = Mano::new();
+        let result = mano.run("// só um comentário");
+        assert!(result.is_ok());
+        assert!(!mano.had_error);
     }
 
     #[test]
@@ -158,7 +183,7 @@ mod tests {
     }
 
     #[test]
-    fn run_parses_and_outputs_ast() {
+    fn run_evaluates_and_outputs_result() {
         let mut mano = Mano::new();
         let mut stdout = Vec::new();
         let mut stderr = Vec::new();
@@ -167,7 +192,7 @@ mod tests {
 
         assert!(result.is_ok());
         let output = String::from_utf8(stdout).unwrap();
-        assert_eq!(output.trim(), "(+ 1 2)");
+        assert_eq!(output.trim(), "3");
     }
 
     #[test]
@@ -182,7 +207,7 @@ mod tests {
         assert!(mano.had_error);
         let errors = String::from_utf8(stderr).unwrap();
         assert!(errors.contains("@"));
-        assert!(errors.contains("Tá inventando"));
+        assert!(errors.contains("Tá na nóia?"));
     }
 
     #[test]
@@ -204,5 +229,58 @@ mod tests {
     fn default_creates_new_mano() {
         let mano: Mano = Default::default();
         assert!(!mano.had_error);
+    }
+
+    #[test]
+    fn run_outputs_parser_errors_to_stderr() {
+        let mut mano = Mano::new();
+        let mut stdout = Vec::new();
+        let mut stderr = Vec::new();
+
+        // Missing right operand - scans OK but fails to parse
+        let result = mano.run_with_output("1 +", &mut stdout, &mut stderr);
+
+        assert!(result.is_ok());
+        assert!(mano.had_error);
+        let errors = String::from_utf8(stderr).unwrap();
+        assert!(!errors.is_empty());
+    }
+
+    #[test]
+    fn run_outputs_runtime_errors_to_stderr() {
+        let mut mano = Mano::new();
+        let mut stdout = Vec::new();
+        let mut stderr = Vec::new();
+
+        // Negating a string - scans and parses OK but fails at runtime
+        let result = mano.run_with_output("-\"mano\"", &mut stdout, &mut stderr);
+
+        assert!(result.is_ok());
+        assert!(mano.had_error);
+        let errors = String::from_utf8(stderr).unwrap();
+        assert!(errors.contains("número")); // Error message mentions "número"
+    }
+
+    #[test]
+    fn repl_resets_error_between_lines() {
+        let mut stdout = Vec::new();
+        let mut stderr = Vec::new();
+
+        let mut mano = Mano::new();
+        // First line has error
+        mano.run_with_output("@", &mut stdout, &mut stderr).unwrap();
+        assert!(mano.had_error);
+
+        // Reset for next line (this is what run_prompt does)
+        stdout.clear();
+        stderr.clear();
+        mano.had_error = false;
+
+        // Second line should work
+        mano.run_with_output("1 + 2", &mut stdout, &mut stderr)
+            .unwrap();
+        assert!(!mano.had_error);
+        let output = String::from_utf8(stdout).unwrap();
+        assert_eq!(output.trim(), "3");
     }
 }
