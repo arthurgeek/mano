@@ -5,7 +5,8 @@
       "Skill(superpowers:test-driven-development)",
       "WebFetch(domain:craftinginterpreters.com)",
       "Bash(cargo test:*)",
-      "Bash(cargo clippy:*)"
+      "Bash(cargo clippy:*)",
+      "Bash(cargo fmt:*)"
     ]
   },
   "enableAllProjectMcpServers": true,

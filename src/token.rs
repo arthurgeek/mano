@@ -54,9 +54,13 @@ pub enum TokenType {
 pub enum Value {
     Number(f64),
     String(String),
+    #[allow(dead_code)]
+    Bool(bool),
+    #[allow(dead_code)]
+    Nil,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Token {
     pub token_type: TokenType,
     pub lexeme: String,
@@ -79,6 +83,9 @@ impl std::fmt::Display for Value {
         match self {
             Value::Number(n) => write!(f, "{}", n),
             Value::String(s) => write!(f, "{}", s),
+            Value::Bool(true) => write!(f, "firmeza"),
+            Value::Bool(false) => write!(f, "treta"),
+            Value::Nil => write!(f, "nadaNão"),
         }
     }
 }
@@ -107,5 +114,23 @@ mod tests {
             line: 1,
         };
         assert_eq!(token.to_string(), "LeftParen 42 42");
+    }
+
+    #[test]
+    fn value_bool_true_displays_correctly() {
+        let value = Value::Bool(true);
+        assert_eq!(value.to_string(), "firmeza");
+    }
+
+    #[test]
+    fn value_bool_false_displays_correctly() {
+        let value = Value::Bool(false);
+        assert_eq!(value.to_string(), "treta");
+    }
+
+    #[test]
+    fn value_nil_displays_correctly() {
+        let value = Value::Nil;
+        assert_eq!(value.to_string(), "nadaNão");
     }
 }
