@@ -16,6 +16,14 @@ cargo test               # Run all tests
 cargo test <test_name>   # Run a single test
 cargo clippy             # Lint the code
 cargo fmt                # Format the code
+cargo tarpaulin --engine llvm --ignore-tests  # Code coverage
+```
+
+### Pre-commit Checklist
+
+Before committing, always run:
+```bash
+cargo fmt && cargo clippy && cargo test
 ```
 
 ## Development Approach

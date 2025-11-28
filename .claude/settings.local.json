@@ -1,7 +1,11 @@
 {
   "permissions": {
     "allow": [
-      "Skill(superpowers:brainstorming)"
+      "Skill(superpowers:brainstorming)",
+      "Skill(superpowers:test-driven-development)",
+      "WebFetch(domain:craftinginterpreters.com)",
+      "Bash(cargo test:*)",
+      "Bash(cargo clippy:*)"
     ]
   },
   "enableAllProjectMcpServers": true,
