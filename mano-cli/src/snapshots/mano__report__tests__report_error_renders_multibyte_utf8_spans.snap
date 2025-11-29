@@ -1,0 +1,11 @@
+---
+source: mano-cli/src/report.rs
+expression: result
+---
+Error: Tá moscando, Brown?
+   ╭─[ :4:2 ]
+   │
+ 4 │ "e aí mano
+   │  ─────┬────  
+   │       ╰────── Cadê o fecha aspas?
+───╯

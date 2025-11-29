@@ -1,0 +1,11 @@
+---
+source: mano-cli/src/report.rs
+expression: result
+---
+Error: Deu ruim na execução, brother!
+   ╭─[ :1:7 ]
+   │
+ 1 │ salve -"oi"
+   │       ──┬──  
+   │         ╰──── Só dá pra negar número, chapa!
+───╯

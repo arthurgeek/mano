@@ -66,8 +66,50 @@ fn repl_recovers_after_error() {
         .write_stdin("@\nsalve 1 + 2;\n")
         .assert()
         .success()
-        .stderr(predicates::str::contains("Tá na nóia"))
+        .stderr(predicates::str::contains("Tá moscando, Brown?"))
         .stdout(predicates::str::contains("3"));
+}
+
+#[test]
+fn repl_errors_use_ariadne_format() {
+    let output = mano().write_stdin("@\n").output().unwrap();
+    assert!(output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    // Strip ANSI codes for snapshot
+    let stderr_clean = strip_ansi(&stderr);
+    insta::assert_snapshot!(stderr_clean);
+}
+
+#[test]
+fn file_errors_show_filename() {
+    let mut file = tempfile::NamedTempFile::with_suffix(".mano").unwrap();
+    std::io::Write::write_all(&mut file, b"@\n").unwrap();
+
+    let output = mano().arg(file.path()).output().unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    // Replace temp path with placeholder for snapshot stability
+    let stderr_clean = strip_ansi(&stderr).replace(
+        &file.path().to_string_lossy().to_string(),
+        "<tempfile>.mano",
+    );
+    insta::assert_snapshot!(stderr_clean);
+}
+
+fn strip_ansi(s: &str) -> String {
+    let mut result = String::new();
+    let mut in_escape = false;
+    for c in s.chars() {
+        if c == '\x1b' {
+            in_escape = true;
+        } else if in_escape {
+            if c == 'm' {
+                in_escape = false;
+            }
+        } else {
+            result.push(c);
+        }
+    }
+    result
 }
 
 #[test]

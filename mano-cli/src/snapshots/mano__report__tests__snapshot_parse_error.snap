@@ -1,0 +1,11 @@
+---
+source: mano-cli/src/report.rs
+expression: result
+---
+Error: Deu mole, maluco!
+   ╭─[ :1:9 ]
+   │
+ 1 │ salve 42
+   │         │ 
+   │         ╰─ Cadê o ponto e vírgula?
+───╯

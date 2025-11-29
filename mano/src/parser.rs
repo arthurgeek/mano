@@ -27,8 +27,8 @@ impl Parser {
         Ok(statements)
     }
 
-    pub fn errors(&self) -> &[ManoError] {
-        &self.errors
+    pub fn take_errors(&mut self) -> Vec<ManoError> {
+        std::mem::take(&mut self.errors)
     }
 
     fn declaration(&mut self) -> Option<Stmt> {
@@ -123,8 +123,8 @@ impl Parser {
             }
 
             return Err(ManoError::Parse {
-                line: equals.line,
                 message: "Isso aí não dá pra atribuir, parça!".to_string(),
+                span: equals.span.clone(),
             });
         }
 
@@ -293,8 +293,8 @@ impl Parser {
                 Ok(Expr::Variable { name })
             }
             _ => Err(ManoError::Parse {
-                line: token.line,
                 message: "Cadê a expressão, jão?".to_string(),
+                span: token.span.clone(),
             }),
         }
     }
@@ -304,8 +304,8 @@ impl Parser {
             return Ok(self.advance());
         }
         Err(ManoError::Parse {
-            line: self.peek().line,
             message: message.to_string(),
+            span: self.peek().span.clone(),
         })
     }
 
@@ -373,7 +373,7 @@ mod tests {
             token_type,
             lexeme: lexeme.to_string(),
             literal,
-            line: 1,
+            span: 0..lexeme.len(),
         }
     }
 
@@ -713,8 +713,9 @@ mod tests {
         let tokens = vec![make_token(TokenType::Plus, "+", None), semi(), eof()];
         let mut parser = Parser::new(tokens);
         parser.parse().unwrap();
-        assert!(!parser.errors().is_empty());
-        assert!(matches!(parser.errors()[0], ManoError::Parse { .. }));
+        let errors = parser.take_errors();
+        assert_eq!(errors.len(), 1);
+        assert!(matches!(&errors[0], ManoError::Parse { .. }));
     }
 
     #[test]
@@ -727,8 +728,9 @@ mod tests {
         ];
         let mut parser = Parser::new(tokens);
         parser.parse().unwrap();
-        assert!(!parser.errors().is_empty());
-        assert!(matches!(parser.errors()[0], ManoError::Parse { .. }));
+        let errors = parser.take_errors();
+        assert_eq!(errors.len(), 1);
+        assert!(matches!(&errors[0], ManoError::Parse { .. }));
     }
 
     // === comma ===
@@ -835,8 +837,9 @@ mod tests {
         ];
         let mut parser = Parser::new(tokens);
         parser.parse().unwrap();
-        assert!(!parser.errors().is_empty());
-        assert!(matches!(parser.errors()[0], ManoError::Parse { .. }));
+        let errors = parser.take_errors();
+        assert_eq!(errors.len(), 1);
+        assert!(matches!(&errors[0], ManoError::Parse { .. }));
     }
 
     #[test]
@@ -849,8 +852,9 @@ mod tests {
         ];
         let mut parser = Parser::new(tokens);
         parser.parse().unwrap();
-        assert!(!parser.errors().is_empty());
-        assert!(matches!(parser.errors()[0], ManoError::Parse { .. }));
+        let errors = parser.take_errors();
+        assert_eq!(errors.len(), 1);
+        assert!(matches!(&errors[0], ManoError::Parse { .. }));
     }
 
     // === synchronize ===
@@ -1113,7 +1117,32 @@ mod tests {
         ];
         let mut parser = Parser::new(tokens);
         parser.parse().unwrap();
-        assert_eq!(parser.errors().len(), 1);
-        assert!(parser.errors()[0].to_string().contains("atribuir"));
+        let errors = parser.take_errors();
+        assert_eq!(errors.len(), 1);
+        if let ManoError::Parse { message, .. } = &errors[0] {
+            assert!(message.contains("atribuir"));
+        } else {
+            panic!("Expected Parse error");
+        }
+    }
+
+    #[test]
+    fn take_errors_returns_and_clears_errors() {
+        let tokens = vec![
+            make_token(TokenType::Number, "1", Some(Value::Number(1.0))),
+            make_token(TokenType::Equal, "=", None),
+            make_token(TokenType::Number, "2", Some(Value::Number(2.0))),
+            semi(),
+            eof(),
+        ];
+        let mut parser = Parser::new(tokens);
+        parser.parse().unwrap();
+
+        let errors = parser.take_errors();
+        assert_eq!(errors.len(), 1);
+        assert!(matches!(&errors[0], ManoError::Parse { .. }));
+
+        // Errors should be cleared
+        assert!(parser.take_errors().is_empty());
     }
 }

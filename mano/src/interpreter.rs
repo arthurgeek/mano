@@ -18,6 +18,10 @@ impl Interpreter {
         }
     }
 
+    pub fn variable_names(&self) -> Vec<String> {
+        self.environment.borrow().variable_names()
+    }
+
     pub fn execute(&mut self, stmt: &Stmt, output: &mut dyn Write) -> Result<(), ManoError> {
         match stmt {
             Stmt::Print { expression } => {
@@ -77,8 +81,8 @@ impl Interpreter {
                     TokenType::Minus => match right_val {
                         Value::Number(n) => Ok(Value::Number(-n)),
                         _ => Err(ManoError::Runtime {
-                            line: operator.line,
                             message: "Só dá pra negar número, tio!".to_string(),
+                            span: operator.span.clone(),
                         }),
                     },
                     TokenType::Bang => Ok(Value::Bool(!self.is_truthy(&right_val))),
@@ -95,7 +99,8 @@ impl Interpreter {
 
                 match operator.token_type {
                     TokenType::Minus | TokenType::Slash | TokenType::Star => {
-                        let (a, b) = self.require_numbers(&left_val, &right_val, operator.line)?;
+                        let (a, b) =
+                            self.require_numbers(&left_val, &right_val, operator.span.clone())?;
                         match operator.token_type {
                             TokenType::Minus => Ok(Value::Number(a - b)),
                             TokenType::Slash => Ok(Value::Number(a / b)),
@@ -109,16 +114,17 @@ impl Interpreter {
                             Ok(Value::String(format!("{}{}", a, b)))
                         }
                         _ => Err(ManoError::Runtime {
-                            line: operator.line,
                             message: "Só dá pra somar número com número ou texto com texto, chapa!"
                                 .to_string(),
+                            span: operator.span.clone(),
                         }),
                     },
                     TokenType::Greater
                     | TokenType::GreaterEqual
                     | TokenType::Less
                     | TokenType::LessEqual => {
-                        let (a, b) = self.require_numbers(&left_val, &right_val, operator.line)?;
+                        let (a, b) =
+                            self.require_numbers(&left_val, &right_val, operator.span.clone())?;
                         let result = match operator.token_type {
                             TokenType::Greater => a > b,
                             TokenType::GreaterEqual => a >= b,
@@ -146,12 +152,17 @@ impl Interpreter {
                     self.interpret(else_branch)
                 }
             }
-            Expr::Variable { name } => self.environment.borrow().get(&name.lexeme, name.line),
+            Expr::Variable { name } => self
+                .environment
+                .borrow()
+                .get(&name.lexeme, name.span.clone()),
             Expr::Assign { name, value } => {
                 let val = self.interpret(value)?;
-                self.environment
-                    .borrow_mut()
-                    .assign(&name.lexeme, val.clone(), name.line)?;
+                self.environment.borrow_mut().assign(
+                    &name.lexeme,
+                    val.clone(),
+                    name.span.clone(),
+                )?;
                 Ok(val)
             }
         }
@@ -169,13 +180,13 @@ impl Interpreter {
         &self,
         left: &Value,
         right: &Value,
-        line: usize,
+        span: std::ops::Range<usize>,
     ) -> Result<(f64, f64), ManoError> {
         match (left, right) {
             (Value::Number(a), Value::Number(b)) => Ok((*a, *b)),
             _ => Err(ManoError::Runtime {
-                line,
                 message: "Os dois lados precisam ser número, irmão!".to_string(),
+                span,
             }),
         }
     }
@@ -258,13 +269,13 @@ mod tests {
     fn make_token(
         token_type: crate::token::TokenType,
         lexeme: &str,
-        line: usize,
+        start: usize,
     ) -> crate::token::Token {
         crate::token::Token {
             token_type,
             lexeme: lexeme.to_string(),
             literal: None,
-            line,
+            span: start..start + lexeme.len(),
         }
     }
 
@@ -291,7 +302,7 @@ mod tests {
             }),
         };
         let result = interpreter.interpret(&expr);
-        assert!(matches!(result, Err(ManoError::Runtime { line: 3, .. })));
+        assert!(matches!(result, Err(ManoError::Runtime { .. })));
     }
 
     #[test]
@@ -423,7 +434,7 @@ mod tests {
             }),
         };
         let result = interpreter.interpret(&expr);
-        assert!(matches!(result, Err(ManoError::Runtime { line: 2, .. })));
+        assert!(matches!(result, Err(ManoError::Runtime { .. })));
     }
 
     // === string concatenation ===
@@ -457,7 +468,7 @@ mod tests {
             }),
         };
         let result = interpreter.interpret(&expr);
-        assert!(matches!(result, Err(ManoError::Runtime { line: 3, .. })));
+        assert!(matches!(result, Err(ManoError::Runtime { .. })));
     }
 
     // === binary comparison ===
@@ -539,7 +550,7 @@ mod tests {
             }),
         };
         let result = interpreter.interpret(&expr);
-        assert!(matches!(result, Err(ManoError::Runtime { line: 4, .. })));
+        assert!(matches!(result, Err(ManoError::Runtime { .. })));
     }
 
     // === binary equality ===
@@ -804,7 +815,7 @@ mod tests {
                 token_type: crate::token::TokenType::Identifier,
                 lexeme: "x".to_string(),
                 literal: None,
-                line: 1,
+                span: 0..1,
             },
             initializer: Some(Expr::Literal {
                 value: Value::Number(42.0),
@@ -819,7 +830,7 @@ mod tests {
                     token_type: crate::token::TokenType::Identifier,
                     lexeme: "x".to_string(),
                     literal: None,
-                    line: 2,
+                    span: 0..1,
                 },
             },
         };
@@ -839,7 +850,7 @@ mod tests {
                 token_type: crate::token::TokenType::Identifier,
                 lexeme: "x".to_string(),
                 literal: None,
-                line: 1,
+                span: 0..1,
             },
             initializer: Some(Expr::Literal {
                 value: Value::Number(1.0),
@@ -854,7 +865,7 @@ mod tests {
                     token_type: crate::token::TokenType::Identifier,
                     lexeme: "x".to_string(),
                     literal: None,
-                    line: 2,
+                    span: 0..1,
                 },
                 value: Box::new(Expr::Literal {
                     value: Value::Number(42.0),
@@ -870,7 +881,7 @@ mod tests {
                     token_type: crate::token::TokenType::Identifier,
                     lexeme: "x".to_string(),
                     literal: None,
-                    line: 3,
+                    span: 0..1,
                 },
             },
         };
@@ -890,7 +901,7 @@ mod tests {
                 token_type: crate::token::TokenType::Identifier,
                 lexeme: "x".to_string(),
                 literal: None,
-                line: 1,
+                span: 0..1,
             },
             initializer: None,
         };
@@ -903,7 +914,7 @@ mod tests {
                     token_type: crate::token::TokenType::Identifier,
                     lexeme: "x".to_string(),
                     literal: None,
-                    line: 2,
+                    span: 0..1,
                 },
             },
         };
@@ -923,7 +934,7 @@ mod tests {
                 token_type: crate::token::TokenType::Identifier,
                 lexeme: "x".to_string(),
                 literal: None,
-                line: 1,
+                span: 0..1,
             },
             initializer: None,
         };
@@ -936,7 +947,7 @@ mod tests {
                     token_type: crate::token::TokenType::Identifier,
                     lexeme: "x".to_string(),
                     literal: None,
-                    line: 2,
+                    span: 0..1,
                 },
                 value: Box::new(Expr::Literal {
                     value: Value::Number(42.0),
@@ -952,7 +963,7 @@ mod tests {
                     token_type: crate::token::TokenType::Identifier,
                     lexeme: "x".to_string(),
                     literal: None,
-                    line: 3,
+                    span: 0..1,
                 },
             },
         };

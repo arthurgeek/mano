@@ -1,11 +1,33 @@
 use crate::error::ManoError;
 use crate::token::{Token, TokenType, Value};
 
+/// All mano keywords with their token types
+pub const KEYWORDS: &[(&str, TokenType)] = &[
+    ("bagulho", TokenType::Class),
+    ("firmeza", TokenType::True),
+    ("mestre", TokenType::Super),
+    ("nadaNão", TokenType::Nil),
+    ("oCara", TokenType::This),
+    ("oiSumida", TokenType::Print),
+    ("olhaEssaFita", TokenType::Fun),
+    ("ow", TokenType::Or),
+    ("saiFora", TokenType::Break),
+    ("salve", TokenType::Print),
+    ("seLiga", TokenType::Var),
+    ("sePá", TokenType::If),
+    ("seVira", TokenType::For),
+    ("segueOFluxo", TokenType::While),
+    ("tamoJunto", TokenType::And),
+    ("toma", TokenType::Return),
+    ("treta", TokenType::False),
+    ("vacilou", TokenType::Else),
+];
+
 pub struct Scanner<'a> {
     source: &'a str,
     start: usize,
     current: usize,
-    line: usize,
+    include_comments: bool,
 }
 
 impl<'a> Scanner<'a> {
@@ -14,7 +36,17 @@ impl<'a> Scanner<'a> {
             source,
             start: 0,
             current: 0,
-            line: 1,
+            include_comments: false,
+        }
+    }
+
+    /// Create a scanner that includes comment tokens (for highlighting)
+    pub fn with_comments(source: &'a str) -> Self {
+        Self {
+            source,
+            start: 0,
+            current: 0,
+            include_comments: true,
         }
     }
 }
@@ -29,12 +61,13 @@ impl<'a> Iterator for Scanner<'a> {
             }
 
             if self.is_at_end() {
+                let span = self.current..self.current;
                 self.current += 1;
                 return Some(Ok(Token {
                     token_type: TokenType::Eof,
                     lexeme: String::new(),
                     literal: None,
-                    line: self.line,
+                    span,
                 }));
             }
 
@@ -43,11 +76,7 @@ impl<'a> Iterator for Scanner<'a> {
 
             match c {
                 // Whitespace
-                ' ' | '\r' | '\t' => continue,
-                '\n' => {
-                    self.line += 1;
-                    continue;
-                }
+                ' ' | '\r' | '\t' | '\n' => continue,
                 // Single-character tokens
                 '(' => return Some(Ok(self.add_token(TokenType::LeftParen))),
                 ')' => return Some(Ok(self.add_token(TokenType::RightParen))),
@@ -67,11 +96,17 @@ impl<'a> Iterator for Scanner<'a> {
                         while self.peek() != Some('\n') && !self.is_at_end() {
                             self.advance();
                         }
+                        if self.include_comments {
+                            return Some(Ok(self.add_token(TokenType::Comment)));
+                        }
                         continue;
                     } else if self.match_char('*') {
                         // Block comment - consume until */
                         if let Err(e) = self.block_comment() {
                             return Some(Err(e));
+                        }
+                        if self.include_comments {
+                            return Some(Ok(self.add_token(TokenType::Comment)));
                         }
                         continue;
                     } else {
@@ -115,9 +150,9 @@ impl<'a> Iterator for Scanner<'a> {
                 c if c.is_ascii_digit() => return Some(Ok(self.number())),
                 c if c.is_alphabetic() || c == '_' => return Some(Ok(self.identifier())),
                 _ => {
-                    return Some(Err(ManoError::UnexpectedCharacter {
-                        line: self.line,
-                        lexeme: c,
+                    return Some(Err(ManoError::Scan {
+                        message: format!("E esse '{}' aí, truta?", c),
+                        span: self.start..self.current,
                     }));
                 }
             }
@@ -154,7 +189,7 @@ impl<'a> Scanner<'a> {
             token_type,
             lexeme: self.source[self.start..self.current].to_string(),
             literal: None,
-            line: self.line,
+            span: self.start..self.current,
         }
     }
 
@@ -163,7 +198,7 @@ impl<'a> Scanner<'a> {
             token_type,
             lexeme: self.source[self.start..self.current].to_string(),
             literal: Some(literal),
-            line: self.line,
+            span: self.start..self.current,
         }
     }
 
@@ -184,26 +219,10 @@ impl<'a> Scanner<'a> {
     }
 
     fn keyword(text: &str) -> Option<TokenType> {
-        match text {
-            "tamoJunto" => Some(TokenType::And),
-            "bagulho" => Some(TokenType::Class),
-            "vacilou" => Some(TokenType::Else),
-            "treta" => Some(TokenType::False),
-            "olhaEssaFita" => Some(TokenType::Fun),
-            "seVira" => Some(TokenType::For),
-            "sePá" => Some(TokenType::If),
-            "nadaNão" => Some(TokenType::Nil),
-            "ow" => Some(TokenType::Or),
-            "salve" | "oiSumida" => Some(TokenType::Print),
-            "toma" => Some(TokenType::Return),
-            "mestre" => Some(TokenType::Super),
-            "oCara" => Some(TokenType::This),
-            "firmeza" => Some(TokenType::True),
-            "seLiga" => Some(TokenType::Var),
-            "segueOFluxo" => Some(TokenType::While),
-            "saiFora" => Some(TokenType::Break),
-            _ => None,
-        }
+        KEYWORDS
+            .iter()
+            .find(|(kw, _)| *kw == text)
+            .map(|(_, tt)| *tt)
     }
 
     fn number(&mut self) -> Token {
@@ -225,18 +244,16 @@ impl<'a> Scanner<'a> {
     }
 
     fn string(&mut self) -> Result<Token, ManoError> {
-        let start_line = self.line;
-
         // Consume characters until closing quote
         while self.peek() != Some('"') && !self.is_at_end() {
-            if self.peek() == Some('\n') {
-                self.line += 1;
-            }
             self.advance();
         }
 
         if self.is_at_end() {
-            return Err(ManoError::UnterminatedString { line: start_line });
+            return Err(ManoError::Scan {
+                message: "Cadê o fecha aspas?".to_string(),
+                span: self.start..self.current,
+            });
         }
 
         // Consume the closing "
@@ -248,15 +265,12 @@ impl<'a> Scanner<'a> {
     }
 
     fn block_comment(&mut self) -> Result<(), ManoError> {
-        let start_line = self.line;
         let mut depth = 1;
 
         while depth > 0 && !self.is_at_end() {
             let c = self.advance();
 
-            if c == '\n' {
-                self.line += 1;
-            } else if c == '/' && self.peek() == Some('*') {
+            if c == '/' && self.peek() == Some('*') {
                 self.advance(); // consume '*'
                 depth += 1;
             } else if c == '*' && self.peek() == Some('/') {
@@ -266,7 +280,10 @@ impl<'a> Scanner<'a> {
         }
 
         if depth > 0 {
-            return Err(ManoError::UnterminatedBlockComment { line: start_line });
+            return Err(ManoError::Scan {
+                message: "Cadê o fecha comentário?".to_string(),
+                span: self.start..self.current,
+            });
         }
 
         Ok(())
@@ -294,15 +311,40 @@ mod tests {
     }
 
     #[test]
-    fn tracks_line_numbers() {
+    fn tokens_have_correct_spans() {
         let mut scanner = Scanner::new("(\n)");
 
         let token1 = scanner.next().unwrap().unwrap();
-        assert_eq!(token1.line, 1);
+        assert_eq!(token1.span, 0..1); // "(" is at byte 0
 
         let token2 = scanner.next().unwrap().unwrap();
         assert_eq!(token2.token_type, TokenType::RightParen);
-        assert_eq!(token2.line, 2);
+        assert_eq!(token2.span, 2..3); // ")" is at byte 2 (after "(\n")
+    }
+
+    #[test]
+    fn spans_handle_unicode_correctly() {
+        // "sePá" is 5 bytes: s(1) e(1) P(1) á(2)
+        // "x" is 1 byte
+        // Source: "sePá x" = 7 bytes total (5 + space + 1)
+        let source = "sePá x";
+        assert_eq!(source.len(), 7); // Verify our byte count
+
+        let mut scanner = Scanner::new(source);
+
+        let keyword = scanner.next().unwrap().unwrap();
+        assert_eq!(keyword.token_type, TokenType::If);
+        assert_eq!(keyword.lexeme, "sePá");
+        assert_eq!(keyword.span, 0..5); // 5 bytes for "sePá"
+
+        let ident = scanner.next().unwrap().unwrap();
+        assert_eq!(ident.token_type, TokenType::Identifier);
+        assert_eq!(ident.lexeme, "x");
+        assert_eq!(ident.span, 6..7); // "x" starts at byte 6
+
+        // Verify we can slice back to the lexeme
+        assert_eq!(&source[keyword.span.clone()], "sePá");
+        assert_eq!(&source[ident.span.clone()], "x");
     }
 
     #[test]
@@ -329,13 +371,11 @@ mod tests {
 
         let second = scanner.next().unwrap();
         assert!(second.is_err());
-        assert!(matches!(
-            second.unwrap_err(),
-            ManoError::UnexpectedCharacter {
-                line: 1,
-                lexeme: '@'
-            }
-        ));
+        if let ManoError::Scan { message, .. } = second.unwrap_err() {
+            assert!(message.contains('@'));
+        } else {
+            panic!("Expected Scan error");
+        }
 
         let third = scanner.next().unwrap();
         assert!(third.is_ok());
@@ -504,10 +544,11 @@ mod tests {
 
         let first = scanner.next().unwrap().unwrap();
         assert_eq!(first.token_type, TokenType::LeftParen);
+        assert_eq!(first.span, 0..1);
 
         let second = scanner.next().unwrap().unwrap();
         assert_eq!(second.token_type, TokenType::RightParen);
-        assert_eq!(second.line, 2);
+        assert_eq!(second.span, 23..24); // ")" at position 23 (len of "( // this is a comment\n" is 24)
     }
 
     #[test]
@@ -554,10 +595,11 @@ mod tests {
         let result = scanner.next().unwrap();
 
         assert!(result.is_err());
-        assert!(matches!(
-            result.unwrap_err(),
-            ManoError::UnterminatedString { line: 1 }
-        ));
+        if let ManoError::Scan { message, .. } = result.unwrap_err() {
+            assert!(message.contains("aspas"));
+        } else {
+            panic!("Expected Scan error");
+        }
     }
 
     #[test]
@@ -567,17 +609,19 @@ mod tests {
         let result = scanner.next().unwrap();
 
         assert!(result.is_err());
-        assert!(matches!(
-            result.unwrap_err(),
-            ManoError::UnterminatedString { line: 1 }
-        ));
+        if let ManoError::Scan { message, .. } = result.unwrap_err() {
+            assert!(message.contains("aspas"));
+        } else {
+            panic!("Expected Scan error");
+        }
     }
 
     #[test]
     fn scans_multiline_string() {
         use crate::token::Value;
 
-        let mut scanner = Scanner::new("\"primeira linha\nsegunda linha\"");
+        let source = "\"primeira linha\nsegunda linha\"";
+        let mut scanner = Scanner::new(source);
         let token = scanner.next().unwrap().unwrap();
 
         assert_eq!(token.token_type, TokenType::String);
@@ -585,11 +629,10 @@ mod tests {
             token.literal,
             Some(Value::String("primeira linha\nsegunda linha".to_string()))
         );
-        assert_eq!(token.line, 2); // Line should be updated
+        assert_eq!(token.span, 0..source.len()); // Spans the entire string
 
-        // Next token (Eof) should be on line 2
         let eof = scanner.next().unwrap().unwrap();
-        assert_eq!(eof.line, 2);
+        assert_eq!(eof.span, source.len()..source.len()); // Eof at end
     }
 
     #[test]
@@ -716,12 +759,15 @@ mod tests {
 
     #[test]
     fn skips_multiline_block_comments() {
-        let scanner = Scanner::new("(\n/* linha 1\nlinha 2\nlinha 3 */\n)");
+        let source = "(\n/* linha 1\nlinha 2\nlinha 3 */\n)";
+        let scanner = Scanner::new(source);
         let tokens: Vec<_> = scanner.collect();
 
         assert_eq!(tokens.len(), 3);
-        // Line number should be updated after multiline comment
-        assert_eq!(tokens[1].as_ref().unwrap().line, 5);
+        // ")" is at the end of the source
+        let paren = tokens[1].as_ref().unwrap();
+        assert_eq!(paren.token_type, TokenType::RightParen);
+        assert_eq!(paren.span, (source.len() - 1)..source.len());
     }
 
     #[test]
@@ -744,9 +790,60 @@ mod tests {
 
         // Should have LeftParen, Error, Eof
         let error = tokens.iter().find(|t| t.is_err()).unwrap();
-        assert!(matches!(
-            error,
-            Err(ManoError::UnterminatedBlockComment { .. })
-        ));
+        if let Err(ManoError::Scan { message, .. }) = error {
+            assert!(message.contains("comentário"));
+        } else {
+            panic!("Expected Scan error");
+        }
+    }
+
+    #[test]
+    fn with_comments_emits_line_comment_token() {
+        let scanner = Scanner::with_comments("// comentário");
+        let tokens: Vec<_> = scanner.flatten().collect();
+
+        assert_eq!(tokens.len(), 2); // Comment, Eof
+        assert_eq!(tokens[0].token_type, TokenType::Comment);
+        assert_eq!(tokens[0].lexeme, "// comentário");
+    }
+
+    #[test]
+    fn with_comments_emits_block_comment_token() {
+        let scanner = Scanner::with_comments("/* bloco */");
+        let tokens: Vec<_> = scanner.flatten().collect();
+
+        assert_eq!(tokens.len(), 2); // Comment, Eof
+        assert_eq!(tokens[0].token_type, TokenType::Comment);
+        assert_eq!(tokens[0].lexeme, "/* bloco */");
+    }
+
+    #[test]
+    fn with_comments_includes_inline_comments() {
+        let scanner = Scanner::with_comments("salve /* inline */ 42");
+        let tokens: Vec<_> = scanner.flatten().collect();
+
+        assert_eq!(tokens[0].token_type, TokenType::Print); // salve
+        assert_eq!(tokens[1].token_type, TokenType::Comment); // /* inline */
+        assert_eq!(tokens[2].token_type, TokenType::Number); // 42
+    }
+
+    #[test]
+    fn with_comments_emits_multiline_block_comment() {
+        let scanner = Scanner::with_comments("/* linha 1\nlinha 2 */");
+        let tokens: Vec<_> = scanner.flatten().collect();
+
+        assert_eq!(tokens.len(), 2); // Comment, Eof
+        assert_eq!(tokens[0].token_type, TokenType::Comment);
+        assert_eq!(tokens[0].lexeme, "/* linha 1\nlinha 2 */");
+    }
+
+    #[test]
+    fn without_comments_skips_comments() {
+        let scanner = Scanner::new("salve /* inline */ 42");
+        let tokens: Vec<_> = scanner.flatten().collect();
+
+        assert_eq!(tokens[0].token_type, TokenType::Print); // salve
+        assert_eq!(tokens[1].token_type, TokenType::Number); // 42
+        assert_eq!(tokens[2].token_type, TokenType::Eof);
     }
 }

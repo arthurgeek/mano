@@ -1,24 +1,17 @@
-use std::path::Path;
-use std::process::ExitCode;
-
-use mano::Mano;
-use rustyline::DefaultEditor;
-use rustyline::error::ReadlineError;
-
-struct ReplState {
+pub struct ReplState {
     buffer: String,
     brace_depth: usize,
 }
 
 impl ReplState {
-    fn new() -> Self {
+    pub fn new() -> Self {
         Self {
             buffer: String::new(),
             brace_depth: 0,
         }
     }
 
-    fn prompt(&self) -> String {
+    pub fn prompt(&self) -> String {
         if self.brace_depth == 0 {
             "> ".to_string()
         } else {
@@ -27,7 +20,7 @@ impl ReplState {
     }
 
     /// Returns true if ready to execute (braces balanced)
-    fn process_line(&mut self, line: &str) -> bool {
+    pub fn process_line(&mut self, line: &str) -> bool {
         for ch in line.chars() {
             match ch {
                 '{' => self.brace_depth += 1,
@@ -42,103 +35,70 @@ impl ReplState {
         self.brace_depth == 0
     }
 
-    fn take_buffer(&mut self) -> String {
+    pub fn take_buffer(&mut self) -> String {
         self.brace_depth = 0;
         std::mem::take(&mut self.buffer)
     }
 
-    fn cancel(&mut self) {
+    pub fn cancel(&mut self) {
         self.buffer.clear();
         self.brace_depth = 0;
     }
 
-    fn is_empty(&self) -> bool {
+    pub fn is_empty(&self) -> bool {
         self.buffer.is_empty()
     }
 
     /// Check if input should be auto-printed (expression without semicolon)
-    fn should_auto_print(input: &str) -> bool {
+    pub fn should_auto_print(input: &str) -> bool {
         let trimmed = input.trim();
         if trimmed.is_empty() {
             return false;
         }
+        // Line comments are not auto-printed
+        if trimmed.starts_with("//") {
+            return false;
+        }
+        // Block comments are not auto-printed
+        if trimmed.starts_with("/*") && trimmed.ends_with("*/") {
+            return false;
+        }
+
+        // Strip trailing line comment for further checks
+        let code = if let Some(idx) = trimmed.find("//") {
+            trimmed[..idx].trim()
+        } else {
+            trimmed
+        };
+
+        // Strip trailing block comment
+        let code = if let Some(start) = code.rfind("/*") {
+            if code.ends_with("*/") {
+                code[..start].trim()
+            } else {
+                code
+            }
+        } else {
+            code
+        };
+
+        if code.is_empty() {
+            return false;
+        }
+
         // Blocks are not auto-printed
-        if trimmed.ends_with('}') {
+        if code.ends_with('}') {
             return false;
         }
         // If it ends with semicolon, it's a statement
-        !trimmed.ends_with(';')
+        !code.ends_with(';')
     }
 
     /// Wrap input in a print statement for auto-printing
-    fn wrap_for_print(input: &str) -> String {
+    pub fn wrap_for_print(input: &str) -> String {
         format!("salve {};", input.trim())
     }
 }
-
-fn main() -> ExitCode {
-    let args: Vec<String> = std::env::args().skip(1).collect();
-
-    let mut mano = Mano::new();
-
-    let result = match args.len() {
-        0 => run_repl(&mut mano),
-        1 => mano.run_file(Path::new(&args[0])),
-        _ => {
-            eprintln!("Uso: mano [script]");
-            return ExitCode::from(64);
-        }
-    };
-
-    match result {
-        Ok(()) => ExitCode::SUCCESS,
-        Err(e) => {
-            eprintln!("{e}");
-            ExitCode::from(65)
-        }
-    }
-}
-
-fn run_repl(mano: &mut Mano) -> Result<(), mano::ManoError> {
-    let mut rl = DefaultEditor::new().expect("Falha ao iniciar o REPL, bicho!");
-    let mut state = ReplState::new();
-
-    loop {
-        match rl.readline(&state.prompt()) {
-            Ok(line) => {
-                let _ = rl.add_history_entry(&line);
-
-                if state.process_line(&line) {
-                    let buffer = state.take_buffer();
-                    let source = if ReplState::should_auto_print(&buffer) {
-                        ReplState::wrap_for_print(&buffer)
-                    } else {
-                        buffer
-                    };
-                    mano.reset_error();
-                    mano.run_with_output(&source, std::io::stdout(), std::io::stderr())?;
-                }
-            }
-            Err(ReadlineError::Interrupted) => {
-                if state.is_empty() {
-                    break;
-                }
-                state.cancel();
-                println!();
-            }
-            Err(ReadlineError::Eof) => {
-                break;
-            }
-            Err(err) => {
-                eprintln!("Deu ruim no REPL, maluco: {:?}", err);
-                break;
-            }
-        }
-    }
-
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -268,6 +228,22 @@ mod tests {
         assert!(!ReplState::should_auto_print(""));
         assert!(!ReplState::should_auto_print("   "));
         assert!(!ReplState::should_auto_print("\n"));
+    }
+
+    #[test]
+    fn should_not_auto_print_comments() {
+        assert!(!ReplState::should_auto_print("// comentário"));
+        assert!(!ReplState::should_auto_print("  // indented comment"));
+        assert!(!ReplState::should_auto_print("/* block comment */"));
+        assert!(!ReplState::should_auto_print("  /* indented */"));
+        assert!(!ReplState::should_auto_print("/* multi\nline\ncomment */"));
+    }
+
+    #[test]
+    fn should_not_auto_print_code_with_trailing_comment() {
+        // Code with trailing comment should respect the code, not the comment
+        assert!(!ReplState::should_auto_print("salve \"mundo\"; // print"));
+        assert!(!ReplState::should_auto_print("seLiga x = 1; /* inline */"));
     }
 
     #[test]

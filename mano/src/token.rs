@@ -1,4 +1,4 @@
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum TokenType {
     // Single-character tokens
     LeftParen,
@@ -29,6 +29,9 @@ pub enum TokenType {
     String,
     Number,
     Identifier,
+
+    // Comments (used for highlighting, skipped by parser)
+    Comment,
 
     // Keywords
     And,    // tamoJunto
@@ -62,13 +65,14 @@ pub enum Value {
     Nil,
 }
 
+use std::ops::Range;
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct Token {
     pub token_type: TokenType,
     pub lexeme: String,
     pub literal: Option<Value>,
-    #[allow(dead_code)] // Used later for error reporting
-    pub line: usize,
+    pub span: Range<usize>,
 }
 
 impl std::fmt::Display for Token {
@@ -102,7 +106,7 @@ mod tests {
             token_type: TokenType::LeftParen,
             lexeme: "(".to_string(),
             literal: None,
-            line: 1,
+            span: 0..1,
         };
         assert_eq!(token.to_string(), "LeftParen ( None");
     }
@@ -113,7 +117,7 @@ mod tests {
             token_type: TokenType::LeftParen,
             lexeme: "42".to_string(),
             literal: Some(Value::Number(42.0)),
-            line: 1,
+            span: 0..2,
         };
         assert_eq!(token.to_string(), "LeftParen 42 42");
     }
@@ -134,5 +138,16 @@ mod tests {
     fn value_nil_displays_correctly() {
         let value = Value::Nil;
         assert_eq!(value.to_string(), "nadaNão");
+    }
+
+    #[test]
+    fn token_has_span() {
+        let token = Token {
+            token_type: TokenType::Number,
+            lexeme: "42".to_string(),
+            literal: Some(Value::Number(42.0)),
+            span: 0..2,
+        };
+        assert_eq!(token.span, 0..2);
     }
 }

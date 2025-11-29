@@ -1,0 +1,11 @@
+---
+source: mano-cli/tests/cli.rs
+expression: stderr_clean
+---
+Error: Tá moscando, Brown?
+   ╭─[ <tempfile>.mano:1:1 ]
+   │
+ 1 │ @
+   │ ┬  
+   │ ╰── E esse '@' aí, truta?
+───╯

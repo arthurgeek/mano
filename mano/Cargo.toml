@@ -1,0 +1,10 @@
+[package]
+name = "mano"
+version = "0.1.0"
+edition = "2024"
+
+[dev-dependencies]
+tempfile = "3.23.0"
+
+[dependencies]
+thiserror = "2.0.17"

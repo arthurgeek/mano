@@ -83,7 +83,7 @@ mod tests {
             token_type,
             lexeme: lexeme.to_string(),
             literal: None,
-            line: 1,
+            span: 0..lexeme.len(),
         }
     }
 
@@ -174,7 +174,7 @@ mod tests {
                 token_type: TokenType::Identifier,
                 lexeme: "x".to_string(),
                 literal: None,
-                line: 1,
+                span: 0..1,
             },
         };
         assert!(matches!(expr, Expr::Variable { name } if name.lexeme == "x"));
@@ -187,7 +187,7 @@ mod tests {
                 token_type: TokenType::Identifier,
                 lexeme: "meuMano".to_string(),
                 literal: None,
-                line: 1,
+                span: 0..7,
             },
         };
         assert_eq!(expr.to_string(), "meuMano");
@@ -200,7 +200,7 @@ mod tests {
                 token_type: TokenType::Identifier,
                 lexeme: "x".to_string(),
                 literal: None,
-                line: 1,
+                span: 0..1,
             },
             value: Box::new(Expr::Literal {
                 value: Value::Number(42.0),
@@ -216,7 +216,7 @@ mod tests {
                 token_type: TokenType::Identifier,
                 lexeme: "x".to_string(),
                 literal: None,
-                line: 1,
+                span: 0..1,
             },
             value: Box::new(Expr::Literal {
                 value: Value::Number(42.0),
