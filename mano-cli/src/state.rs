@@ -247,6 +247,18 @@ mod tests {
     }
 
     #[test]
+    fn should_auto_print_expression_with_unclosed_block_comment() {
+        // Unclosed block comment shouldn't prevent auto-print of expression
+        assert!(ReplState::should_auto_print("1 + 2 /* unclosed"));
+    }
+
+    #[test]
+    fn should_not_auto_print_mixed_comments_only() {
+        // Block comment followed by line comment = no code
+        assert!(!ReplState::should_auto_print("/* a */ // b"));
+    }
+
+    #[test]
     fn wrap_for_print_adds_salve() {
         assert_eq!(ReplState::wrap_for_print("a"), "salve a;");
         assert_eq!(ReplState::wrap_for_print("\"mano\""), "salve \"mano\";");

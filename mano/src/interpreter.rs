@@ -50,6 +50,35 @@ impl Interpreter {
                 Ok(())
             }
             Stmt::Block { statements } => self.execute_block(statements, output),
+            Stmt::If {
+                condition,
+                then_branch,
+                else_branch,
+            } => {
+                let condition_value = self.interpret(condition)?;
+                if self.is_truthy(&condition_value) {
+                    self.execute(then_branch, output)
+                } else if let Some(else_stmt) = else_branch {
+                    self.execute(else_stmt, output)
+                } else {
+                    Ok(())
+                }
+            }
+            Stmt::While { condition, body } => {
+                loop {
+                    let condition_value = self.interpret(condition)?;
+                    if !self.is_truthy(&condition_value) {
+                        break;
+                    }
+                    match self.execute(body, output) {
+                        Ok(()) => {}
+                        Err(ManoError::Break) => break,
+                        Err(e) => return Err(e),
+                    }
+                }
+                Ok(())
+            }
+            Stmt::Break => Err(ManoError::Break),
         }
     }
 
@@ -164,6 +193,26 @@ impl Interpreter {
                     name.span.clone(),
                 )?;
                 Ok(val)
+            }
+            Expr::Logical {
+                left,
+                operator,
+                right,
+            } => {
+                let left_val = self.interpret(left)?;
+
+                if operator.token_type == TokenType::Or {
+                    if self.is_truthy(&left_val) {
+                        return Ok(left_val);
+                    }
+                } else {
+                    // And
+                    if !self.is_truthy(&left_val) {
+                        return Ok(left_val);
+                    }
+                }
+
+                self.interpret(right)
             }
         }
     }
@@ -1174,6 +1223,381 @@ mod tests {
             name: make_token(crate::token::TokenType::Identifier, "y", 5),
         };
         let result = interpreter.interpret(&var_expr);
+        assert!(matches!(result, Err(ManoError::Runtime { .. })));
+    }
+
+    // === if statements ===
+
+    #[test]
+    fn executes_if_true_branch() {
+        let mut interpreter = Interpreter::new();
+        let mut output = Vec::new();
+
+        // sePá (firmeza) salve 1;
+        let stmt = Stmt::If {
+            condition: Expr::Literal {
+                value: Value::Bool(true),
+            },
+            then_branch: Box::new(Stmt::Print {
+                expression: Expr::Literal {
+                    value: Value::Number(1.0),
+                },
+            }),
+            else_branch: None,
+        };
+        interpreter.execute(&stmt, &mut output).unwrap();
+        assert_eq!(String::from_utf8(output).unwrap(), "1\n");
+    }
+
+    #[test]
+    fn executes_if_false_skips_then() {
+        let mut interpreter = Interpreter::new();
+        let mut output = Vec::new();
+
+        // sePá (treta) salve 1;
+        let stmt = Stmt::If {
+            condition: Expr::Literal {
+                value: Value::Bool(false),
+            },
+            then_branch: Box::new(Stmt::Print {
+                expression: Expr::Literal {
+                    value: Value::Number(1.0),
+                },
+            }),
+            else_branch: None,
+        };
+        interpreter.execute(&stmt, &mut output).unwrap();
+        assert!(output.is_empty());
+    }
+
+    #[test]
+    fn executes_if_else_true_branch() {
+        let mut interpreter = Interpreter::new();
+        let mut output = Vec::new();
+
+        // sePá (firmeza) salve 1; vacilou salve 2;
+        let stmt = Stmt::If {
+            condition: Expr::Literal {
+                value: Value::Bool(true),
+            },
+            then_branch: Box::new(Stmt::Print {
+                expression: Expr::Literal {
+                    value: Value::Number(1.0),
+                },
+            }),
+            else_branch: Some(Box::new(Stmt::Print {
+                expression: Expr::Literal {
+                    value: Value::Number(2.0),
+                },
+            })),
+        };
+        interpreter.execute(&stmt, &mut output).unwrap();
+        assert_eq!(String::from_utf8(output).unwrap(), "1\n");
+    }
+
+    #[test]
+    fn executes_if_else_false_branch() {
+        let mut interpreter = Interpreter::new();
+        let mut output = Vec::new();
+
+        // sePá (treta) salve 1; vacilou salve 2;
+        let stmt = Stmt::If {
+            condition: Expr::Literal {
+                value: Value::Bool(false),
+            },
+            then_branch: Box::new(Stmt::Print {
+                expression: Expr::Literal {
+                    value: Value::Number(1.0),
+                },
+            }),
+            else_branch: Some(Box::new(Stmt::Print {
+                expression: Expr::Literal {
+                    value: Value::Number(2.0),
+                },
+            })),
+        };
+        interpreter.execute(&stmt, &mut output).unwrap();
+        assert_eq!(String::from_utf8(output).unwrap(), "2\n");
+    }
+
+    #[test]
+    fn if_uses_truthiness() {
+        let mut interpreter = Interpreter::new();
+        let mut output = Vec::new();
+
+        // sePá (nadaNão) salve 1; vacilou salve 2;
+        let stmt = Stmt::If {
+            condition: Expr::Literal { value: Value::Nil },
+            then_branch: Box::new(Stmt::Print {
+                expression: Expr::Literal {
+                    value: Value::Number(1.0),
+                },
+            }),
+            else_branch: Some(Box::new(Stmt::Print {
+                expression: Expr::Literal {
+                    value: Value::Number(2.0),
+                },
+            })),
+        };
+        interpreter.execute(&stmt, &mut output).unwrap();
+        assert_eq!(String::from_utf8(output).unwrap(), "2\n");
+    }
+
+    // === logical operators ===
+
+    #[test]
+    fn or_returns_left_if_truthy() {
+        let mut interpreter = Interpreter::new();
+        // "hi" ow 2 -> "hi"
+        let expr = Expr::Logical {
+            left: Box::new(Expr::Literal {
+                value: Value::String("hi".to_string()),
+            }),
+            operator: make_token(crate::token::TokenType::Or, "ow", 0),
+            right: Box::new(Expr::Literal {
+                value: Value::Number(2.0),
+            }),
+        };
+        let result = interpreter.interpret(&expr).unwrap();
+        assert_eq!(result, Value::String("hi".to_string()));
+    }
+
+    #[test]
+    fn or_returns_right_if_left_falsy() {
+        let mut interpreter = Interpreter::new();
+        // nadaNão ow "fallback" -> "fallback"
+        let expr = Expr::Logical {
+            left: Box::new(Expr::Literal { value: Value::Nil }),
+            operator: make_token(crate::token::TokenType::Or, "ow", 0),
+            right: Box::new(Expr::Literal {
+                value: Value::String("fallback".to_string()),
+            }),
+        };
+        let result = interpreter.interpret(&expr).unwrap();
+        assert_eq!(result, Value::String("fallback".to_string()));
+    }
+
+    #[test]
+    fn and_returns_left_if_falsy() {
+        let mut interpreter = Interpreter::new();
+        // treta tamoJunto "never" -> treta
+        let expr = Expr::Logical {
+            left: Box::new(Expr::Literal {
+                value: Value::Bool(false),
+            }),
+            operator: make_token(crate::token::TokenType::And, "tamoJunto", 0),
+            right: Box::new(Expr::Literal {
+                value: Value::String("never".to_string()),
+            }),
+        };
+        let result = interpreter.interpret(&expr).unwrap();
+        assert_eq!(result, Value::Bool(false));
+    }
+
+    #[test]
+    fn and_returns_right_if_left_truthy() {
+        let mut interpreter = Interpreter::new();
+        // firmeza tamoJunto "yes" -> "yes"
+        let expr = Expr::Logical {
+            left: Box::new(Expr::Literal {
+                value: Value::Bool(true),
+            }),
+            operator: make_token(crate::token::TokenType::And, "tamoJunto", 0),
+            right: Box::new(Expr::Literal {
+                value: Value::String("yes".to_string()),
+            }),
+        };
+        let result = interpreter.interpret(&expr).unwrap();
+        assert_eq!(result, Value::String("yes".to_string()));
+    }
+
+    // === while statements ===
+
+    #[test]
+    fn executes_while_loop() {
+        let mut interpreter = Interpreter::new();
+        let mut output = Vec::new();
+
+        // seLiga x = 0;
+        let var_stmt = Stmt::Var {
+            name: make_token(crate::token::TokenType::Identifier, "x", 0),
+            initializer: Some(Expr::Literal {
+                value: Value::Number(0.0),
+            }),
+        };
+        interpreter.execute(&var_stmt, &mut output).unwrap();
+
+        // segueOFluxo (x < 3) { salve x; x = x + 1; }
+        let while_stmt = Stmt::While {
+            condition: Expr::Binary {
+                left: Box::new(Expr::Variable {
+                    name: make_token(crate::token::TokenType::Identifier, "x", 0),
+                }),
+                operator: make_token(crate::token::TokenType::Less, "<", 0),
+                right: Box::new(Expr::Literal {
+                    value: Value::Number(3.0),
+                }),
+            },
+            body: Box::new(Stmt::Block {
+                statements: vec![
+                    Stmt::Print {
+                        expression: Expr::Variable {
+                            name: make_token(crate::token::TokenType::Identifier, "x", 0),
+                        },
+                    },
+                    Stmt::Expression {
+                        expression: Expr::Assign {
+                            name: make_token(crate::token::TokenType::Identifier, "x", 0),
+                            value: Box::new(Expr::Binary {
+                                left: Box::new(Expr::Variable {
+                                    name: make_token(crate::token::TokenType::Identifier, "x", 0),
+                                }),
+                                operator: make_token(crate::token::TokenType::Plus, "+", 0),
+                                right: Box::new(Expr::Literal {
+                                    value: Value::Number(1.0),
+                                }),
+                            }),
+                        },
+                    },
+                ],
+            }),
+        };
+        interpreter.execute(&while_stmt, &mut output).unwrap();
+        assert_eq!(String::from_utf8(output).unwrap(), "0\n1\n2\n");
+    }
+
+    #[test]
+    fn while_false_never_executes() {
+        let mut interpreter = Interpreter::new();
+        let mut output = Vec::new();
+
+        // segueOFluxo (treta) salve 1;
+        let stmt = Stmt::While {
+            condition: Expr::Literal {
+                value: Value::Bool(false),
+            },
+            body: Box::new(Stmt::Print {
+                expression: Expr::Literal {
+                    value: Value::Number(1.0),
+                },
+            }),
+        };
+        interpreter.execute(&stmt, &mut output).unwrap();
+        assert!(output.is_empty());
+    }
+
+    // === break statements ===
+
+    #[test]
+    fn break_exits_while_loop() {
+        let mut interpreter = Interpreter::new();
+        let mut output = Vec::new();
+
+        // seLiga i = 0;
+        let var_stmt = Stmt::Var {
+            name: make_token(crate::token::TokenType::Identifier, "i", 0),
+            initializer: Some(Expr::Literal {
+                value: Value::Number(0.0),
+            }),
+        };
+        interpreter.execute(&var_stmt, &mut output).unwrap();
+
+        // segueOFluxo (firmeza) { salve i; sePá (i == 2) saiFora; i = i + 1; }
+        let while_stmt = Stmt::While {
+            condition: Expr::Literal {
+                value: Value::Bool(true),
+            },
+            body: Box::new(Stmt::Block {
+                statements: vec![
+                    Stmt::Print {
+                        expression: Expr::Variable {
+                            name: make_token(crate::token::TokenType::Identifier, "i", 0),
+                        },
+                    },
+                    Stmt::If {
+                        condition: Expr::Binary {
+                            left: Box::new(Expr::Variable {
+                                name: make_token(crate::token::TokenType::Identifier, "i", 0),
+                            }),
+                            operator: make_token(crate::token::TokenType::EqualEqual, "==", 0),
+                            right: Box::new(Expr::Literal {
+                                value: Value::Number(2.0),
+                            }),
+                        },
+                        then_branch: Box::new(Stmt::Break),
+                        else_branch: None,
+                    },
+                    Stmt::Expression {
+                        expression: Expr::Assign {
+                            name: make_token(crate::token::TokenType::Identifier, "i", 0),
+                            value: Box::new(Expr::Binary {
+                                left: Box::new(Expr::Variable {
+                                    name: make_token(crate::token::TokenType::Identifier, "i", 0),
+                                }),
+                                operator: make_token(crate::token::TokenType::Plus, "+", 0),
+                                right: Box::new(Expr::Literal {
+                                    value: Value::Number(1.0),
+                                }),
+                            }),
+                        },
+                    },
+                ],
+            }),
+        };
+        interpreter.execute(&while_stmt, &mut output).unwrap();
+        assert_eq!(String::from_utf8(output).unwrap(), "0\n1\n2\n");
+    }
+
+    #[test]
+    fn break_exits_immediately() {
+        let mut interpreter = Interpreter::new();
+        let mut output = Vec::new();
+
+        // segueOFluxo (firmeza) { salve 1; saiFora; salve 2; }
+        let stmt = Stmt::While {
+            condition: Expr::Literal {
+                value: Value::Bool(true),
+            },
+            body: Box::new(Stmt::Block {
+                statements: vec![
+                    Stmt::Print {
+                        expression: Expr::Literal {
+                            value: Value::Number(1.0),
+                        },
+                    },
+                    Stmt::Break,
+                    Stmt::Print {
+                        expression: Expr::Literal {
+                            value: Value::Number(2.0),
+                        },
+                    },
+                ],
+            }),
+        };
+        interpreter.execute(&stmt, &mut output).unwrap();
+        assert_eq!(String::from_utf8(output).unwrap(), "1\n");
+    }
+
+    #[test]
+    fn while_propagates_runtime_error() {
+        let mut interpreter = Interpreter::new();
+        let mut output = Vec::new();
+
+        // segueOFluxo (firmeza) { salve -"oops"; }
+        let stmt = Stmt::While {
+            condition: Expr::Literal {
+                value: Value::Bool(true),
+            },
+            body: Box::new(Stmt::Print {
+                expression: Expr::Unary {
+                    operator: make_token(crate::token::TokenType::Minus, "-", 0),
+                    right: Box::new(Expr::Literal {
+                        value: Value::String("oops".to_string()),
+                    }),
+                },
+            }),
+        };
+        let result = interpreter.execute(&stmt, &mut output);
         assert!(matches!(result, Err(ManoError::Runtime { .. })));
     }
 }

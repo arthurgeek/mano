@@ -1,0 +1,19 @@
+// Busca linear: acha o primeiro quadrado perfeito > 50
+
+salve "Procurando primeiro quadrado perfeito > 50...";
+
+seLiga n = 51;
+segueOFluxo (n < 200) {
+    // Testa se n é quadrado perfeito
+    seLiga raiz = 1;
+    segueOFluxo (raiz * raiz < n) {
+        raiz = raiz + 1;
+    }
+
+    sePá (raiz * raiz == n) {
+        salve "Achei!";
+        salve n;
+        saiFora;
+    }
+    n = n + 1;
+}

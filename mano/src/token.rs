@@ -59,9 +59,7 @@ pub enum TokenType {
 pub enum Value {
     Number(f64),
     String(String),
-    #[allow(dead_code)]
     Bool(bool),
-    #[allow(dead_code)]
     Nil,
 }
 

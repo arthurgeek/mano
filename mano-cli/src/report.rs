@@ -64,6 +64,9 @@ pub fn report_error<W: Write>(
                 .write(src, &mut writer)
                 .ok();
         }
+        ManoError::Break => {
+            // Internal control flow, should never be reported to users
+        }
     }
 }
 
@@ -166,6 +169,14 @@ mod tests {
         report_error(&error, "", None, &mut output);
         let result = String::from_utf8(output).unwrap();
         assert!(result.contains("Cadê o arquivo"));
+    }
+
+    #[test]
+    fn report_break_outputs_nothing() {
+        let error = ManoError::Break;
+        let mut output = Vec::new();
+        report_error(&error, "", None, &mut output);
+        assert!(output.is_empty());
     }
 
     // Snapshot tests for exact error formatting

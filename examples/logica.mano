@@ -1,0 +1,34 @@
+// Exemplo de operadores lógicos e condicionais
+
+seLiga idade = 25;
+seLiga temCarteira = firmeza;
+seLiga temCarro = treta;
+
+// tamoJunto (and) - precisa das duas condições
+sePá (idade >= 18 tamoJunto temCarteira)
+    salve "Pode dirigir!";
+vacilou
+    salve "Não pode dirigir ainda...";
+
+// ow (or) - basta uma condição
+sePá (temCarro ow temCarteira)
+    salve "Tem alguma coisa pelo menos!";
+vacilou
+    salve "Não tem nada, mano...";
+
+// Short-circuit - retorna o valor, não booleano
+seLiga nome = nadaNão ow "Anônimo";
+salve nome;
+
+seLiga resultado = "valor" tamoJunto "existe";
+salve resultado;
+
+// Combinando tudo
+seVira (seLiga número = 0; número <= 10; número = número + 2) {
+    sePá (número >= 7 tamoJunto número <= 10)
+        salve "Aprovado!";
+    vacilou sePá (número >= 5 ow número == 4)
+        salve "Recuperação...";
+    vacilou
+        salve "Reprovado!";
+}

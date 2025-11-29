@@ -14,6 +14,9 @@ pub enum ManoError {
 
     #[error("Deu ruim na execução, brother!")]
     Runtime { message: String, span: Range<usize> },
+
+    #[error("")]
+    Break,
 }
 
 #[cfg(test)]

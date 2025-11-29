@@ -2,7 +2,6 @@ use std::fmt;
 
 use crate::token::{Token, Value};
 
-#[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq)]
 pub enum Expr {
     Binary {
@@ -32,6 +31,11 @@ pub enum Expr {
         name: Token,
         value: Box<Expr>,
     },
+    Logical {
+        left: Box<Expr>,
+        operator: Token,
+        right: Box<Expr>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -49,6 +53,16 @@ pub enum Stmt {
     Block {
         statements: Vec<Stmt>,
     },
+    If {
+        condition: Expr,
+        then_branch: Box<Stmt>,
+        else_branch: Option<Box<Stmt>>,
+    },
+    While {
+        condition: Expr,
+        body: Box<Stmt>,
+    },
+    Break,
 }
 
 impl fmt::Display for Expr {
@@ -69,6 +83,11 @@ impl fmt::Display for Expr {
             Expr::Grouping { expression } => write!(f, "(group {})", expression),
             Expr::Variable { name } => write!(f, "{}", name.lexeme),
             Expr::Assign { name, value } => write!(f, "(= {} {})", name.lexeme, value),
+            Expr::Logical {
+                left,
+                operator,
+                right,
+            } => write!(f, "({} {} {})", operator.lexeme, left, right),
         }
     }
 }

@@ -6,6 +6,7 @@ pub struct Parser {
     tokens: Vec<Token>,
     current: usize,
     errors: Vec<ManoError>,
+    loop_depth: usize,
 }
 
 impl Parser {
@@ -14,6 +15,7 @@ impl Parser {
             tokens,
             current: 0,
             errors: Vec::new(),
+            loop_depth: 0,
         }
     }
 
@@ -67,13 +69,127 @@ impl Parser {
     }
 
     fn statement(&mut self) -> Result<Stmt, ManoError> {
-        if self.match_types(&[TokenType::LeftBrace]) {
+        if self.match_types(&[TokenType::Break]) {
+            self.break_statement()
+        } else if self.match_types(&[TokenType::For]) {
+            self.for_statement()
+        } else if self.match_types(&[TokenType::If]) {
+            self.if_statement()
+        } else if self.match_types(&[TokenType::While]) {
+            self.while_statement()
+        } else if self.match_types(&[TokenType::LeftBrace]) {
             self.block()
         } else if self.match_types(&[TokenType::Print]) {
             self.print_statement()
         } else {
             self.expression_statement()
         }
+    }
+
+    fn break_statement(&mut self) -> Result<Stmt, ManoError> {
+        let keyword = self.previous().clone();
+        if self.loop_depth == 0 {
+            return Err(ManoError::Parse {
+                message: "Não pode dar saiFora fora de um loop, mano!".to_string(),
+                span: keyword.span,
+            });
+        }
+        self.consume(TokenType::Semicolon, "Cadê o ';' depois do saiFora, véi?")?;
+        Ok(Stmt::Break)
+    }
+
+    fn for_statement(&mut self) -> Result<Stmt, ManoError> {
+        self.consume(TokenType::LeftParen, "Cadê o '(' depois do seVira, mano?")?;
+
+        // Initializer
+        let initializer = if self.match_types(&[TokenType::Semicolon]) {
+            None
+        } else if self.match_types(&[TokenType::Var]) {
+            Some(self.var_declaration()?)
+        } else {
+            Some(self.expression_statement()?)
+        };
+
+        // Condition
+        let condition = if self.check(&TokenType::Semicolon) {
+            Expr::Literal {
+                value: Value::Bool(true),
+            }
+        } else {
+            self.expression()?
+        };
+        self.consume(TokenType::Semicolon, "Cadê o ';' depois da condição, véi?")?;
+
+        // Increment
+        let increment = if self.check(&TokenType::RightParen) {
+            None
+        } else {
+            Some(self.expression()?)
+        };
+        self.consume(TokenType::RightParen, "Cadê o ')' depois do seVira, mano?")?;
+
+        // Body (inside loop context for break)
+        self.loop_depth += 1;
+        let body_result = self.statement();
+        self.loop_depth -= 1;
+        let mut body = body_result?;
+
+        // Desugar: add increment to end of body
+        if let Some(inc) = increment {
+            body = Stmt::Block {
+                statements: vec![body, Stmt::Expression { expression: inc }],
+            };
+        }
+
+        // Desugar: wrap in while
+        body = Stmt::While {
+            condition,
+            body: Box::new(body),
+        };
+
+        // Desugar: add initializer
+        if let Some(init) = initializer {
+            body = Stmt::Block {
+                statements: vec![init, body],
+            };
+        }
+
+        Ok(body)
+    }
+
+    fn while_statement(&mut self) -> Result<Stmt, ManoError> {
+        self.consume(
+            TokenType::LeftParen,
+            "Cadê o '(' depois do segueOFluxo, mano?",
+        )?;
+        let condition = self.expression()?;
+        self.consume(TokenType::RightParen, "Cadê o ')' depois da condição, véi?")?;
+
+        self.loop_depth += 1;
+        let body_result = self.statement();
+        self.loop_depth -= 1;
+        let body = Box::new(body_result?);
+
+        Ok(Stmt::While { condition, body })
+    }
+
+    fn if_statement(&mut self) -> Result<Stmt, ManoError> {
+        self.consume(TokenType::LeftParen, "Cadê o '(' depois do sePá, mano?")?;
+        let condition = self.expression()?;
+        self.consume(TokenType::RightParen, "Cadê o ')' depois da condição, véi?")?;
+
+        let then_branch = Box::new(self.statement()?);
+        let else_branch = if self.match_types(&[TokenType::Else]) {
+            Some(Box::new(self.statement()?))
+        } else {
+            None
+        };
+
+        Ok(Stmt::If {
+            condition,
+            then_branch,
+            else_branch,
+        })
     }
 
     fn block(&mut self) -> Result<Stmt, ManoError> {
@@ -148,7 +264,7 @@ impl Parser {
     }
 
     fn ternary(&mut self) -> Result<Expr, ManoError> {
-        let expr = self.equality()?;
+        let expr = self.or()?;
 
         if self.match_types(&[TokenType::Question]) {
             let then_branch = self.expression()?;
@@ -159,6 +275,38 @@ impl Parser {
                 then_branch: Box::new(then_branch),
                 else_branch: Box::new(else_branch),
             });
+        }
+
+        Ok(expr)
+    }
+
+    fn or(&mut self) -> Result<Expr, ManoError> {
+        let mut expr = self.and()?;
+
+        while self.match_types(&[TokenType::Or]) {
+            let operator = self.previous().clone();
+            let right = self.and()?;
+            expr = Expr::Logical {
+                left: Box::new(expr),
+                operator,
+                right: Box::new(right),
+            };
+        }
+
+        Ok(expr)
+    }
+
+    fn and(&mut self) -> Result<Expr, ManoError> {
+        let mut expr = self.equality()?;
+
+        while self.match_types(&[TokenType::And]) {
+            let operator = self.previous().clone();
+            let right = self.equality()?;
+            expr = Expr::Logical {
+                left: Box::new(expr),
+                operator,
+                right: Box::new(right),
+            };
         }
 
         Ok(expr)
@@ -1144,5 +1292,506 @@ mod tests {
 
         // Errors should be cleared
         assert!(parser.take_errors().is_empty());
+    }
+
+    // === if statements ===
+
+    #[test]
+    fn parses_if_statement() {
+        // sePá (firmeza) salve 1;
+        let tokens = vec![
+            make_token(TokenType::If, "sePá", None),
+            make_token(TokenType::LeftParen, "(", None),
+            make_token(TokenType::True, "firmeza", None),
+            make_token(TokenType::RightParen, ")", None),
+            make_token(TokenType::Print, "salve", None),
+            make_token(TokenType::Number, "1", Some(Value::Number(1.0))),
+            semi(),
+            eof(),
+        ];
+        let mut parser = Parser::new(tokens);
+        let stmts = parser.parse().unwrap();
+        assert_eq!(stmts.len(), 1);
+        match &stmts[0] {
+            Stmt::If {
+                condition,
+                then_branch,
+                else_branch,
+            } => {
+                assert!(matches!(
+                    condition,
+                    Expr::Literal {
+                        value: Value::Bool(true)
+                    }
+                ));
+                assert!(matches!(then_branch.as_ref(), Stmt::Print { .. }));
+                assert!(else_branch.is_none());
+            }
+            _ => panic!("expected If statement"),
+        }
+    }
+
+    #[test]
+    fn parses_if_else_statement() {
+        // sePá (treta) salve 1; vacilou salve 2;
+        let tokens = vec![
+            make_token(TokenType::If, "sePá", None),
+            make_token(TokenType::LeftParen, "(", None),
+            make_token(TokenType::False, "treta", None),
+            make_token(TokenType::RightParen, ")", None),
+            make_token(TokenType::Print, "salve", None),
+            make_token(TokenType::Number, "1", Some(Value::Number(1.0))),
+            semi(),
+            make_token(TokenType::Else, "vacilou", None),
+            make_token(TokenType::Print, "salve", None),
+            make_token(TokenType::Number, "2", Some(Value::Number(2.0))),
+            semi(),
+            eof(),
+        ];
+        let mut parser = Parser::new(tokens);
+        let stmts = parser.parse().unwrap();
+        assert_eq!(stmts.len(), 1);
+        match &stmts[0] {
+            Stmt::If {
+                condition,
+                then_branch,
+                else_branch,
+            } => {
+                assert!(matches!(
+                    condition,
+                    Expr::Literal {
+                        value: Value::Bool(false)
+                    }
+                ));
+                assert!(matches!(then_branch.as_ref(), Stmt::Print { .. }));
+                assert!(else_branch.is_some());
+                assert!(matches!(
+                    else_branch.as_ref().unwrap().as_ref(),
+                    Stmt::Print { .. }
+                ));
+            }
+            _ => panic!("expected If statement"),
+        }
+    }
+
+    #[test]
+    fn parses_if_with_block() {
+        // sePá (firmeza) { salve 1; }
+        let tokens = vec![
+            make_token(TokenType::If, "sePá", None),
+            make_token(TokenType::LeftParen, "(", None),
+            make_token(TokenType::True, "firmeza", None),
+            make_token(TokenType::RightParen, ")", None),
+            make_token(TokenType::LeftBrace, "{", None),
+            make_token(TokenType::Print, "salve", None),
+            make_token(TokenType::Number, "1", Some(Value::Number(1.0))),
+            semi(),
+            make_token(TokenType::RightBrace, "}", None),
+            eof(),
+        ];
+        let mut parser = Parser::new(tokens);
+        let stmts = parser.parse().unwrap();
+        assert_eq!(stmts.len(), 1);
+        match &stmts[0] {
+            Stmt::If { then_branch, .. } => {
+                assert!(matches!(then_branch.as_ref(), Stmt::Block { .. }));
+            }
+            _ => panic!("expected If statement"),
+        }
+    }
+
+    // === logical operators ===
+
+    #[test]
+    fn parses_or_expression() {
+        // firmeza ow treta;
+        let tokens = vec![
+            make_token(TokenType::True, "firmeza", None),
+            make_token(TokenType::Or, "ow", None),
+            make_token(TokenType::False, "treta", None),
+            semi(),
+            eof(),
+        ];
+        let mut parser = Parser::new(tokens);
+        let stmts = parser.parse().unwrap();
+        assert_eq!(stmts.len(), 1);
+        match &stmts[0] {
+            Stmt::Expression { expression } => {
+                assert!(matches!(expression, Expr::Logical { .. }));
+                assert_eq!(expression.to_string(), "(ow firmeza treta)");
+            }
+            _ => panic!("expected expression statement"),
+        }
+    }
+
+    #[test]
+    fn parses_and_expression() {
+        // firmeza tamoJunto treta;
+        let tokens = vec![
+            make_token(TokenType::True, "firmeza", None),
+            make_token(TokenType::And, "tamoJunto", None),
+            make_token(TokenType::False, "treta", None),
+            semi(),
+            eof(),
+        ];
+        let mut parser = Parser::new(tokens);
+        let stmts = parser.parse().unwrap();
+        assert_eq!(stmts.len(), 1);
+        match &stmts[0] {
+            Stmt::Expression { expression } => {
+                assert!(matches!(expression, Expr::Logical { .. }));
+                assert_eq!(expression.to_string(), "(tamoJunto firmeza treta)");
+            }
+            _ => panic!("expected expression statement"),
+        }
+    }
+
+    #[test]
+    fn and_has_higher_precedence_than_or() {
+        // a ow b tamoJunto c -> a ow (b tamoJunto c)
+        let tokens = vec![
+            make_token(TokenType::Identifier, "a", None),
+            make_token(TokenType::Or, "ow", None),
+            make_token(TokenType::Identifier, "b", None),
+            make_token(TokenType::And, "tamoJunto", None),
+            make_token(TokenType::Identifier, "c", None),
+            semi(),
+            eof(),
+        ];
+        let mut parser = Parser::new(tokens);
+        let stmts = parser.parse().unwrap();
+        match &stmts[0] {
+            Stmt::Expression { expression } => {
+                assert_eq!(expression.to_string(), "(ow a (tamoJunto b c))");
+            }
+            _ => panic!("expected expression statement"),
+        }
+    }
+
+    #[test]
+    fn or_is_left_associative() {
+        // a ow b ow c -> (a ow b) ow c
+        let tokens = vec![
+            make_token(TokenType::Identifier, "a", None),
+            make_token(TokenType::Or, "ow", None),
+            make_token(TokenType::Identifier, "b", None),
+            make_token(TokenType::Or, "ow", None),
+            make_token(TokenType::Identifier, "c", None),
+            semi(),
+            eof(),
+        ];
+        let mut parser = Parser::new(tokens);
+        let stmts = parser.parse().unwrap();
+        match &stmts[0] {
+            Stmt::Expression { expression } => {
+                assert_eq!(expression.to_string(), "(ow (ow a b) c)");
+            }
+            _ => panic!("expected expression statement"),
+        }
+    }
+
+    // === while statements ===
+
+    #[test]
+    fn parses_while_statement() {
+        // segueOFluxo (firmeza) salve 1;
+        let tokens = vec![
+            make_token(TokenType::While, "segueOFluxo", None),
+            make_token(TokenType::LeftParen, "(", None),
+            make_token(TokenType::True, "firmeza", None),
+            make_token(TokenType::RightParen, ")", None),
+            make_token(TokenType::Print, "salve", None),
+            make_token(TokenType::Number, "1", Some(Value::Number(1.0))),
+            semi(),
+            eof(),
+        ];
+        let mut parser = Parser::new(tokens);
+        let stmts = parser.parse().unwrap();
+        assert_eq!(stmts.len(), 1);
+        match &stmts[0] {
+            Stmt::While { condition, body } => {
+                assert!(matches!(
+                    condition,
+                    Expr::Literal {
+                        value: Value::Bool(true)
+                    }
+                ));
+                assert!(matches!(body.as_ref(), Stmt::Print { .. }));
+            }
+            _ => panic!("expected While statement"),
+        }
+    }
+
+    #[test]
+    fn parses_while_with_block() {
+        // segueOFluxo (firmeza) { salve 1; }
+        let tokens = vec![
+            make_token(TokenType::While, "segueOFluxo", None),
+            make_token(TokenType::LeftParen, "(", None),
+            make_token(TokenType::True, "firmeza", None),
+            make_token(TokenType::RightParen, ")", None),
+            make_token(TokenType::LeftBrace, "{", None),
+            make_token(TokenType::Print, "salve", None),
+            make_token(TokenType::Number, "1", Some(Value::Number(1.0))),
+            semi(),
+            make_token(TokenType::RightBrace, "}", None),
+            eof(),
+        ];
+        let mut parser = Parser::new(tokens);
+        let stmts = parser.parse().unwrap();
+        assert_eq!(stmts.len(), 1);
+        match &stmts[0] {
+            Stmt::While { body, .. } => {
+                assert!(matches!(body.as_ref(), Stmt::Block { .. }));
+            }
+            _ => panic!("expected While statement"),
+        }
+    }
+
+    // === for statements ===
+
+    #[test]
+    fn parses_for_with_all_clauses() {
+        // seVira (seLiga i = 0; i < 3; i = i + 1) salve i;
+        // Desugars to: { seLiga i = 0; segueOFluxo (i < 3) { salve i; i = i + 1; } }
+        let tokens = vec![
+            make_token(TokenType::For, "seVira", None),
+            make_token(TokenType::LeftParen, "(", None),
+            make_token(TokenType::Var, "seLiga", None),
+            make_token(TokenType::Identifier, "i", None),
+            make_token(TokenType::Equal, "=", None),
+            make_token(TokenType::Number, "0", Some(Value::Number(0.0))),
+            semi(),
+            make_token(TokenType::Identifier, "i", None),
+            make_token(TokenType::Less, "<", None),
+            make_token(TokenType::Number, "3", Some(Value::Number(3.0))),
+            semi(),
+            make_token(TokenType::Identifier, "i", None),
+            make_token(TokenType::Equal, "=", None),
+            make_token(TokenType::Identifier, "i", None),
+            make_token(TokenType::Plus, "+", None),
+            make_token(TokenType::Number, "1", Some(Value::Number(1.0))),
+            make_token(TokenType::RightParen, ")", None),
+            make_token(TokenType::Print, "salve", None),
+            make_token(TokenType::Identifier, "i", None),
+            semi(),
+            eof(),
+        ];
+        let mut parser = Parser::new(tokens);
+        let stmts = parser.parse().unwrap();
+        assert_eq!(stmts.len(), 1);
+        // Should be a block containing var decl and while
+        match &stmts[0] {
+            Stmt::Block { statements } => {
+                assert_eq!(statements.len(), 2);
+                assert!(matches!(&statements[0], Stmt::Var { .. }));
+                assert!(matches!(&statements[1], Stmt::While { .. }));
+            }
+            _ => panic!("expected Block statement (desugared for)"),
+        }
+    }
+
+    #[test]
+    fn parses_for_without_initializer() {
+        // seVira (; i < 3; i = i + 1) salve i;
+        let tokens = vec![
+            make_token(TokenType::For, "seVira", None),
+            make_token(TokenType::LeftParen, "(", None),
+            semi(),
+            make_token(TokenType::Identifier, "i", None),
+            make_token(TokenType::Less, "<", None),
+            make_token(TokenType::Number, "3", Some(Value::Number(3.0))),
+            semi(),
+            make_token(TokenType::Identifier, "i", None),
+            make_token(TokenType::Equal, "=", None),
+            make_token(TokenType::Identifier, "i", None),
+            make_token(TokenType::Plus, "+", None),
+            make_token(TokenType::Number, "1", Some(Value::Number(1.0))),
+            make_token(TokenType::RightParen, ")", None),
+            make_token(TokenType::Print, "salve", None),
+            make_token(TokenType::Identifier, "i", None),
+            semi(),
+            eof(),
+        ];
+        let mut parser = Parser::new(tokens);
+        let stmts = parser.parse().unwrap();
+        assert_eq!(stmts.len(), 1);
+        // No initializer means just a while loop (no wrapping block)
+        assert!(matches!(&stmts[0], Stmt::While { .. }));
+    }
+
+    #[test]
+    fn parses_for_without_condition() {
+        // seVira (seLiga i = 0;; i = i + 1) salve i;
+        // Infinite loop - condition defaults to true
+        let tokens = vec![
+            make_token(TokenType::For, "seVira", None),
+            make_token(TokenType::LeftParen, "(", None),
+            make_token(TokenType::Var, "seLiga", None),
+            make_token(TokenType::Identifier, "i", None),
+            make_token(TokenType::Equal, "=", None),
+            make_token(TokenType::Number, "0", Some(Value::Number(0.0))),
+            semi(),
+            semi(), // empty condition
+            make_token(TokenType::Identifier, "i", None),
+            make_token(TokenType::Equal, "=", None),
+            make_token(TokenType::Identifier, "i", None),
+            make_token(TokenType::Plus, "+", None),
+            make_token(TokenType::Number, "1", Some(Value::Number(1.0))),
+            make_token(TokenType::RightParen, ")", None),
+            make_token(TokenType::Print, "salve", None),
+            make_token(TokenType::Identifier, "i", None),
+            semi(),
+            eof(),
+        ];
+        let mut parser = Parser::new(tokens);
+        let stmts = parser.parse().unwrap();
+        assert_eq!(stmts.len(), 1);
+        match &stmts[0] {
+            Stmt::Block { statements } => {
+                assert_eq!(statements.len(), 2);
+                match &statements[1] {
+                    Stmt::While { condition, .. } => {
+                        // Condition should be true literal
+                        assert!(matches!(
+                            condition,
+                            Expr::Literal {
+                                value: Value::Bool(true)
+                            }
+                        ));
+                    }
+                    _ => panic!("expected While"),
+                }
+            }
+            _ => panic!("expected Block"),
+        }
+    }
+
+    #[test]
+    fn parses_for_with_expression_initializer() {
+        // seVira (i = 0; i < 3; i = i + 1) salve i;
+        // Expression initializer (not var declaration)
+        let tokens = vec![
+            make_token(TokenType::For, "seVira", None),
+            make_token(TokenType::LeftParen, "(", None),
+            make_token(TokenType::Identifier, "i", None),
+            make_token(TokenType::Equal, "=", None),
+            make_token(TokenType::Number, "0", Some(Value::Number(0.0))),
+            semi(),
+            make_token(TokenType::Identifier, "i", None),
+            make_token(TokenType::Less, "<", None),
+            make_token(TokenType::Number, "3", Some(Value::Number(3.0))),
+            semi(),
+            make_token(TokenType::Identifier, "i", None),
+            make_token(TokenType::Equal, "=", None),
+            make_token(TokenType::Identifier, "i", None),
+            make_token(TokenType::Plus, "+", None),
+            make_token(TokenType::Number, "1", Some(Value::Number(1.0))),
+            make_token(TokenType::RightParen, ")", None),
+            make_token(TokenType::Print, "salve", None),
+            make_token(TokenType::Identifier, "i", None),
+            semi(),
+            eof(),
+        ];
+        let mut parser = Parser::new(tokens);
+        let stmts = parser.parse().unwrap();
+        assert_eq!(stmts.len(), 1);
+        // Should desugar to block with expression statement + while
+        match &stmts[0] {
+            Stmt::Block { statements } => {
+                assert_eq!(statements.len(), 2);
+                // First should be expression statement (i = 0)
+                assert!(matches!(&statements[0], Stmt::Expression { .. }));
+                // Second should be while
+                assert!(matches!(&statements[1], Stmt::While { .. }));
+            }
+            _ => panic!("expected Block"),
+        }
+    }
+
+    // === break statements ===
+
+    #[test]
+    fn parses_break_in_while() {
+        // segueOFluxo (firmeza) saiFora;
+        let tokens = vec![
+            make_token(TokenType::While, "segueOFluxo", None),
+            make_token(TokenType::LeftParen, "(", None),
+            make_token(TokenType::True, "firmeza", None),
+            make_token(TokenType::RightParen, ")", None),
+            make_token(TokenType::Break, "saiFora", None),
+            semi(),
+            eof(),
+        ];
+        let mut parser = Parser::new(tokens);
+        let stmts = parser.parse().unwrap();
+        assert_eq!(stmts.len(), 1);
+        match &stmts[0] {
+            Stmt::While { body, .. } => {
+                assert!(matches!(body.as_ref(), Stmt::Break));
+            }
+            _ => panic!("expected While"),
+        }
+    }
+
+    #[test]
+    fn parses_break_in_for() {
+        // seVira (;;) saiFora;
+        let tokens = vec![
+            make_token(TokenType::For, "seVira", None),
+            make_token(TokenType::LeftParen, "(", None),
+            semi(),
+            semi(),
+            make_token(TokenType::RightParen, ")", None),
+            make_token(TokenType::Break, "saiFora", None),
+            semi(),
+            eof(),
+        ];
+        let mut parser = Parser::new(tokens);
+        let stmts = parser.parse().unwrap();
+        assert_eq!(stmts.len(), 1);
+        // for desugars to while
+        match &stmts[0] {
+            Stmt::While { body, .. } => {
+                assert!(matches!(body.as_ref(), Stmt::Break));
+            }
+            _ => panic!("expected While (desugared for)"),
+        }
+    }
+
+    #[test]
+    fn break_outside_loop_is_error() {
+        // saiFora; (not in a loop)
+        let tokens = vec![make_token(TokenType::Break, "saiFora", None), semi(), eof()];
+        let mut parser = Parser::new(tokens);
+        parser.parse().unwrap();
+        let errors = parser.take_errors();
+        assert_eq!(errors.len(), 1);
+        assert!(matches!(&errors[0], ManoError::Parse { .. }));
+    }
+
+    #[test]
+    fn break_in_nested_if_inside_loop_is_ok() {
+        // segueOFluxo (firmeza) { sePá (firmeza) saiFora; }
+        let tokens = vec![
+            make_token(TokenType::While, "segueOFluxo", None),
+            make_token(TokenType::LeftParen, "(", None),
+            make_token(TokenType::True, "firmeza", None),
+            make_token(TokenType::RightParen, ")", None),
+            make_token(TokenType::LeftBrace, "{", None),
+            make_token(TokenType::If, "sePá", None),
+            make_token(TokenType::LeftParen, "(", None),
+            make_token(TokenType::True, "firmeza", None),
+            make_token(TokenType::RightParen, ")", None),
+            make_token(TokenType::Break, "saiFora", None),
+            semi(),
+            make_token(TokenType::RightBrace, "}", None),
+            eof(),
+        ];
+        let mut parser = Parser::new(tokens);
+        let stmts = parser.parse().unwrap();
+        let errors = parser.take_errors();
+        assert!(errors.is_empty());
+        assert_eq!(stmts.len(), 1);
     }
 }
