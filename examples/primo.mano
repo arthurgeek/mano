@@ -1,0 +1,23 @@
+// Verifica se um número é primo
+
+seLiga n = 97;
+seLiga éPrimo = firmeza;
+
+sePá (n < 2) {
+    éPrimo = treta;
+} vacilou {
+    seLiga divisor = 2;
+    segueOFluxo (divisor * divisor <= n) {
+        sePá (n % divisor == 0) {
+            éPrimo = treta;
+            saiFora;
+        }
+        divisor = divisor + 1;
+    }
+}
+
+salve n;
+sePá (éPrimo)
+    salve "é primo!";
+vacilou
+    salve "não é primo.";

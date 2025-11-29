@@ -1,5 +1,9 @@
 // Tudo que o mano sabe fazer (por enquanto)!
 
+// === Print ===
+salve "E aí!";         // salve = print normal
+oiSumida "Quanto tempo!";  // oiSumida = pra quem sumiu
+
 // === Literais ===
 salve 42;              // numero inteiro
 salve 3.14159;         // numero decimal
@@ -64,7 +68,7 @@ salve idade;
 seLiga 🔥 = 100;
 seLiga número = 42;
 seLiga имя = "мано";
-salve 🔥;
+oiSumida 🔥;  // O clássico!
 salve número;
 salve имя;
 

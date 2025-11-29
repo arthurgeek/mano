@@ -1,0 +1,32 @@
+// Collatz Conjecture (3n+1 problem)
+// Prova que mano é Turing completo!
+//
+// Regras:
+//   - Se n é par: n = n / 2
+//   - Se n é ímpar: n = 3n + 1
+//   - Repete até chegar em 1
+//
+// Ninguém provou que sempre termina... mas funciona!
+
+seLiga n = 27;  // Famoso por ter sequência longa (111 passos)
+seLiga passos = 0;
+
+salve "Começando com:";
+salve n;
+salve "---";
+
+segueOFluxo (n != 1) {
+    sePá (n % 2 == 0)
+        n = n / 2;
+    vacilou
+        n = 3 * n + 1;
+
+    salve n;
+    passos = passos + 1;
+}
+
+salve "---";
+oiSumida 1;  // Finalmente apareceu!
+salve "depois de";
+salve passos;
+salve "passos!";

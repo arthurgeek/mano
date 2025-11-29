@@ -1,0 +1,49 @@
+// Máquina de Minsky (Counter Machine)
+// Prova Turing-completeness usando apenas: INC, DEC, JZ (jump if zero)
+//
+// Computando a + b transferindo b para a:
+//   enquanto b != 0: dec(b), inc(a)
+
+seLiga a = 7;
+seLiga b = 5;
+
+salve "Somando via Minsky machine:";
+salve a;
+salve "+";
+salve b;
+
+// Loop: enquanto b != 0
+segueOFluxo (b != 0) {  // JZ(b, fim)
+    b = b - 1;          // DEC(b)
+    a = a + 1;          // INC(a)
+}
+
+salve "=";
+salve a;
+
+// Multiplicação também é possível!
+// a * b = somar 'a' consigo mesmo 'b' vezes
+salve "---";
+salve "Multiplicando via Minsky:";
+
+seLiga x = 6;
+seLiga y = 4;
+seLiga produto = 0;
+
+salve x;
+salve "*";
+salve y;
+
+// Loop externo: y vezes
+segueOFluxo (y != 0) {
+    y = y - 1;
+    // Loop interno: adicionar x ao produto
+    seLiga temp = x;
+    segueOFluxo (temp != 0) {
+        temp = temp - 1;
+        produto = produto + 1;
+    }
+}
+
+salve "=";
+oiSumida produto;  // Apareceu depois de tanto loop!

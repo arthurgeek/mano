@@ -1,0 +1,16 @@
+// Fatorial iterativo
+
+seLiga n = 10;
+seLiga resultado = 1;
+
+salve "Calculando";
+salve n;
+salve "fatorial...";
+
+seLiga i = 2;
+segueOFluxo (i <= n) {
+    resultado = resultado * i;
+    i = i + 1;
+}
+
+oiSumida resultado;  // Quanto tempo sem te ver!
