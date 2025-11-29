@@ -1,0 +1,11 @@
+// Demonstração de escopo de bloco
+seLiga a = "fora";
+seLiga b = "fora";
+{
+  seLiga a = "dentro";
+  salve a;
+  salve b;
+  b = "modificado";
+}
+salve a;
+salve b;

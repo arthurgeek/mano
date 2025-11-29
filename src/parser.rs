@@ -1,26 +1,134 @@
-use crate::ast::Expr;
+use crate::ast::{Expr, Stmt};
 use crate::error::ManoError;
 use crate::token::{Token, TokenType, Value};
 
 pub struct Parser {
     tokens: Vec<Token>,
     current: usize,
+    errors: Vec<ManoError>,
 }
 
 impl Parser {
     pub fn new(tokens: Vec<Token>) -> Self {
-        Self { tokens, current: 0 }
+        Self {
+            tokens,
+            current: 0,
+            errors: Vec::new(),
+        }
     }
 
-    pub fn parse(&mut self) -> Result<Option<Expr>, ManoError> {
-        if self.is_at_end() {
-            return Ok(None);
+    pub fn parse(&mut self) -> Result<Vec<Stmt>, ManoError> {
+        let mut statements = Vec::new();
+        while !self.is_at_end() {
+            if let Some(stmt) = self.declaration() {
+                statements.push(stmt);
+            }
         }
-        self.expression().map(Some)
+        Ok(statements)
+    }
+
+    pub fn errors(&self) -> &[ManoError] {
+        &self.errors
+    }
+
+    fn declaration(&mut self) -> Option<Stmt> {
+        let result = if self.match_types(&[TokenType::Var]) {
+            self.var_declaration()
+        } else {
+            self.statement()
+        };
+
+        match result {
+            Ok(stmt) => Some(stmt),
+            Err(e) => {
+                self.errors.push(e);
+                self.synchronize();
+                None
+            }
+        }
+    }
+
+    fn var_declaration(&mut self) -> Result<Stmt, ManoError> {
+        let name = self
+            .consume(TokenType::Identifier, "Cadê o nome da variável, parça?")?
+            .clone();
+
+        let initializer = if self.match_types(&[TokenType::Equal]) {
+            Some(self.expression()?)
+        } else {
+            None
+        };
+
+        self.consume(
+            TokenType::Semicolon,
+            "Cadê o ';' depois da declaração, véi?",
+        )?;
+        Ok(Stmt::Var { name, initializer })
+    }
+
+    fn statement(&mut self) -> Result<Stmt, ManoError> {
+        if self.match_types(&[TokenType::LeftBrace]) {
+            self.block()
+        } else if self.match_types(&[TokenType::Print]) {
+            self.print_statement()
+        } else {
+            self.expression_statement()
+        }
+    }
+
+    fn block(&mut self) -> Result<Stmt, ManoError> {
+        let mut statements = Vec::new();
+
+        while !self.check(&TokenType::RightBrace) && !self.is_at_end() {
+            if let Some(stmt) = self.declaration() {
+                statements.push(stmt);
+            }
+        }
+
+        self.consume(
+            TokenType::RightBrace,
+            "Cadê o '}' pra fechar o bloco, mano?",
+        )?;
+        Ok(Stmt::Block { statements })
+    }
+
+    fn print_statement(&mut self) -> Result<Stmt, ManoError> {
+        let expression = self.expression()?;
+        self.consume(TokenType::Semicolon, "Cadê o ';' depois do salve, mano?")?;
+        Ok(Stmt::Print { expression })
+    }
+
+    fn expression_statement(&mut self) -> Result<Stmt, ManoError> {
+        let expression = self.expression()?;
+        self.consume(TokenType::Semicolon, "Cadê o ';' no final, chapa?")?;
+        Ok(Stmt::Expression { expression })
     }
 
     fn expression(&mut self) -> Result<Expr, ManoError> {
-        self.comma()
+        self.assignment()
+    }
+
+    fn assignment(&mut self) -> Result<Expr, ManoError> {
+        let expr = self.comma()?;
+
+        if self.match_types(&[TokenType::Equal]) {
+            let equals = self.previous().clone();
+            let value = self.assignment()?;
+
+            if let Expr::Variable { name } = expr {
+                return Ok(Expr::Assign {
+                    name,
+                    value: Box::new(value),
+                });
+            }
+
+            return Err(ManoError::Parse {
+                line: equals.line,
+                message: "Isso aí não dá pra atribuir, parça!".to_string(),
+            });
+        }
+
+        Ok(expr)
     }
 
     fn comma(&mut self) -> Result<Expr, ManoError> {
@@ -179,6 +287,11 @@ impl Parser {
                     expression: Box::new(expr),
                 })
             }
+            TokenType::Identifier => {
+                let name = token.clone();
+                self.advance();
+                Ok(Expr::Variable { name })
+            }
             _ => Err(ManoError::Parse {
                 line: token.line,
                 message: "Cadê a expressão, jão?".to_string(),
@@ -196,7 +309,6 @@ impl Parser {
         })
     }
 
-    #[allow(dead_code)]
     fn synchronize(&mut self) {
         self.advance();
 
@@ -253,6 +365,7 @@ impl Parser {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ast::Stmt;
     use crate::token::{TokenType, Value};
 
     fn make_token(token_type: TokenType, lexeme: &str, literal: Option<Value>) -> Token {
@@ -268,14 +381,18 @@ mod tests {
         make_token(TokenType::Eof, "", None)
     }
 
+    fn semi() -> Token {
+        make_token(TokenType::Semicolon, ";", None)
+    }
+
     // === empty input ===
 
     #[test]
-    fn parse_eof_only_returns_none() {
+    fn parse_eof_only_returns_empty() {
         let tokens = vec![eof()];
         let mut parser = Parser::new(tokens);
         let result = parser.parse().unwrap();
-        assert!(result.is_none());
+        assert!(result.is_empty());
     }
 
     // === primary ===
@@ -284,11 +401,20 @@ mod tests {
     fn parses_number_literal() {
         let tokens = vec![
             make_token(TokenType::Number, "42", Some(Value::Number(42.0))),
+            semi(),
             eof(),
         ];
         let mut parser = Parser::new(tokens);
-        let expr = parser.parse().unwrap().unwrap();
-        assert!(matches!(expr, Expr::Literal { value: Value::Number(n) } if n == 42.0));
+        let stmts = parser.parse().unwrap();
+        assert_eq!(stmts.len(), 1);
+        match &stmts[0] {
+            Stmt::Expression { expression } => {
+                assert!(
+                    matches!(expression, Expr::Literal { value: Value::Number(n) } if *n == 42.0)
+                );
+            }
+            _ => panic!("expected expression statement"),
+        }
     }
 
     #[test]
@@ -299,45 +425,68 @@ mod tests {
                 "\"mano\"",
                 Some(Value::String("mano".to_string())),
             ),
+            semi(),
             eof(),
         ];
         let mut parser = Parser::new(tokens);
-        let expr = parser.parse().unwrap().unwrap();
-        assert!(matches!(expr, Expr::Literal { value: Value::String(ref s) } if s == "mano"));
+        let stmts = parser.parse().unwrap();
+        match &stmts[0] {
+            Stmt::Expression { expression } => {
+                assert!(
+                    matches!(expression, Expr::Literal { value: Value::String(s) } if s == "mano")
+                );
+            }
+            _ => panic!("expected expression statement"),
+        }
     }
 
     #[test]
     fn parses_true_literal() {
-        let tokens = vec![make_token(TokenType::True, "firmeza", None), eof()];
+        let tokens = vec![make_token(TokenType::True, "firmeza", None), semi(), eof()];
         let mut parser = Parser::new(tokens);
-        let expr = parser.parse().unwrap().unwrap();
-        assert!(matches!(
-            expr,
-            Expr::Literal {
-                value: Value::Bool(true)
+        let stmts = parser.parse().unwrap();
+        match &stmts[0] {
+            Stmt::Expression { expression } => {
+                assert!(matches!(
+                    expression,
+                    Expr::Literal {
+                        value: Value::Bool(true)
+                    }
+                ));
             }
-        ));
+            _ => panic!("expected expression statement"),
+        }
     }
 
     #[test]
     fn parses_false_literal() {
-        let tokens = vec![make_token(TokenType::False, "treta", None), eof()];
+        let tokens = vec![make_token(TokenType::False, "treta", None), semi(), eof()];
         let mut parser = Parser::new(tokens);
-        let expr = parser.parse().unwrap().unwrap();
-        assert!(matches!(
-            expr,
-            Expr::Literal {
-                value: Value::Bool(false)
+        let stmts = parser.parse().unwrap();
+        match &stmts[0] {
+            Stmt::Expression { expression } => {
+                assert!(matches!(
+                    expression,
+                    Expr::Literal {
+                        value: Value::Bool(false)
+                    }
+                ));
             }
-        ));
+            _ => panic!("expected expression statement"),
+        }
     }
 
     #[test]
     fn parses_nil_literal() {
-        let tokens = vec![make_token(TokenType::Nil, "nadaNão", None), eof()];
+        let tokens = vec![make_token(TokenType::Nil, "nadaNão", None), semi(), eof()];
         let mut parser = Parser::new(tokens);
-        let expr = parser.parse().unwrap().unwrap();
-        assert!(matches!(expr, Expr::Literal { value: Value::Nil }));
+        let stmts = parser.parse().unwrap();
+        match &stmts[0] {
+            Stmt::Expression { expression } => {
+                assert!(matches!(expression, Expr::Literal { value: Value::Nil }));
+            }
+            _ => panic!("expected expression statement"),
+        }
     }
 
     #[test]
@@ -346,11 +495,17 @@ mod tests {
             make_token(TokenType::LeftParen, "(", None),
             make_token(TokenType::Number, "42", Some(Value::Number(42.0))),
             make_token(TokenType::RightParen, ")", None),
+            semi(),
             eof(),
         ];
         let mut parser = Parser::new(tokens);
-        let expr = parser.parse().unwrap().unwrap();
-        assert!(matches!(expr, Expr::Grouping { .. }));
+        let stmts = parser.parse().unwrap();
+        match &stmts[0] {
+            Stmt::Expression { expression } => {
+                assert!(matches!(expression, Expr::Grouping { .. }));
+            }
+            _ => panic!("expected expression statement"),
+        }
     }
 
     // === unary ===
@@ -360,11 +515,17 @@ mod tests {
         let tokens = vec![
             make_token(TokenType::Minus, "-", None),
             make_token(TokenType::Number, "5", Some(Value::Number(5.0))),
+            semi(),
             eof(),
         ];
         let mut parser = Parser::new(tokens);
-        let expr = parser.parse().unwrap().unwrap();
-        assert!(matches!(expr, Expr::Unary { .. }));
+        let stmts = parser.parse().unwrap();
+        match &stmts[0] {
+            Stmt::Expression { expression } => {
+                assert!(matches!(expression, Expr::Unary { .. }));
+            }
+            _ => panic!("expected expression statement"),
+        }
     }
 
     #[test]
@@ -372,11 +533,17 @@ mod tests {
         let tokens = vec![
             make_token(TokenType::Bang, "!", None),
             make_token(TokenType::True, "firmeza", None),
+            semi(),
             eof(),
         ];
         let mut parser = Parser::new(tokens);
-        let expr = parser.parse().unwrap().unwrap();
-        assert!(matches!(expr, Expr::Unary { .. }));
+        let stmts = parser.parse().unwrap();
+        match &stmts[0] {
+            Stmt::Expression { expression } => {
+                assert!(matches!(expression, Expr::Unary { .. }));
+            }
+            _ => panic!("expected expression statement"),
+        }
     }
 
     // === factor ===
@@ -387,11 +554,17 @@ mod tests {
             make_token(TokenType::Number, "2", Some(Value::Number(2.0))),
             make_token(TokenType::Star, "*", None),
             make_token(TokenType::Number, "3", Some(Value::Number(3.0))),
+            semi(),
             eof(),
         ];
         let mut parser = Parser::new(tokens);
-        let expr = parser.parse().unwrap().unwrap();
-        assert!(matches!(expr, Expr::Binary { .. }));
+        let stmts = parser.parse().unwrap();
+        match &stmts[0] {
+            Stmt::Expression { expression } => {
+                assert!(matches!(expression, Expr::Binary { .. }));
+            }
+            _ => panic!("expected expression statement"),
+        }
     }
 
     #[test]
@@ -400,11 +573,17 @@ mod tests {
             make_token(TokenType::Number, "6", Some(Value::Number(6.0))),
             make_token(TokenType::Slash, "/", None),
             make_token(TokenType::Number, "2", Some(Value::Number(2.0))),
+            semi(),
             eof(),
         ];
         let mut parser = Parser::new(tokens);
-        let expr = parser.parse().unwrap().unwrap();
-        assert!(matches!(expr, Expr::Binary { .. }));
+        let stmts = parser.parse().unwrap();
+        match &stmts[0] {
+            Stmt::Expression { expression } => {
+                assert!(matches!(expression, Expr::Binary { .. }));
+            }
+            _ => panic!("expected expression statement"),
+        }
     }
 
     // === term ===
@@ -415,11 +594,17 @@ mod tests {
             make_token(TokenType::Number, "1", Some(Value::Number(1.0))),
             make_token(TokenType::Plus, "+", None),
             make_token(TokenType::Number, "2", Some(Value::Number(2.0))),
+            semi(),
             eof(),
         ];
         let mut parser = Parser::new(tokens);
-        let expr = parser.parse().unwrap().unwrap();
-        assert!(matches!(expr, Expr::Binary { .. }));
+        let stmts = parser.parse().unwrap();
+        match &stmts[0] {
+            Stmt::Expression { expression } => {
+                assert!(matches!(expression, Expr::Binary { .. }));
+            }
+            _ => panic!("expected expression statement"),
+        }
     }
 
     #[test]
@@ -428,11 +613,17 @@ mod tests {
             make_token(TokenType::Number, "5", Some(Value::Number(5.0))),
             make_token(TokenType::Minus, "-", None),
             make_token(TokenType::Number, "3", Some(Value::Number(3.0))),
+            semi(),
             eof(),
         ];
         let mut parser = Parser::new(tokens);
-        let expr = parser.parse().unwrap().unwrap();
-        assert!(matches!(expr, Expr::Binary { .. }));
+        let stmts = parser.parse().unwrap();
+        match &stmts[0] {
+            Stmt::Expression { expression } => {
+                assert!(matches!(expression, Expr::Binary { .. }));
+            }
+            _ => panic!("expected expression statement"),
+        }
     }
 
     // === comparison ===
@@ -443,11 +634,17 @@ mod tests {
             make_token(TokenType::Number, "5", Some(Value::Number(5.0))),
             make_token(TokenType::Greater, ">", None),
             make_token(TokenType::Number, "3", Some(Value::Number(3.0))),
+            semi(),
             eof(),
         ];
         let mut parser = Parser::new(tokens);
-        let expr = parser.parse().unwrap().unwrap();
-        assert!(matches!(expr, Expr::Binary { .. }));
+        let stmts = parser.parse().unwrap();
+        match &stmts[0] {
+            Stmt::Expression { expression } => {
+                assert!(matches!(expression, Expr::Binary { .. }));
+            }
+            _ => panic!("expected expression statement"),
+        }
     }
 
     #[test]
@@ -456,11 +653,17 @@ mod tests {
             make_token(TokenType::Number, "3", Some(Value::Number(3.0))),
             make_token(TokenType::Less, "<", None),
             make_token(TokenType::Number, "5", Some(Value::Number(5.0))),
+            semi(),
             eof(),
         ];
         let mut parser = Parser::new(tokens);
-        let expr = parser.parse().unwrap().unwrap();
-        assert!(matches!(expr, Expr::Binary { .. }));
+        let stmts = parser.parse().unwrap();
+        match &stmts[0] {
+            Stmt::Expression { expression } => {
+                assert!(matches!(expression, Expr::Binary { .. }));
+            }
+            _ => panic!("expected expression statement"),
+        }
     }
 
     // === equality ===
@@ -471,11 +674,17 @@ mod tests {
             make_token(TokenType::Number, "1", Some(Value::Number(1.0))),
             make_token(TokenType::EqualEqual, "==", None),
             make_token(TokenType::Number, "1", Some(Value::Number(1.0))),
+            semi(),
             eof(),
         ];
         let mut parser = Parser::new(tokens);
-        let expr = parser.parse().unwrap().unwrap();
-        assert!(matches!(expr, Expr::Binary { .. }));
+        let stmts = parser.parse().unwrap();
+        match &stmts[0] {
+            Stmt::Expression { expression } => {
+                assert!(matches!(expression, Expr::Binary { .. }));
+            }
+            _ => panic!("expected expression statement"),
+        }
     }
 
     #[test]
@@ -484,21 +693,28 @@ mod tests {
             make_token(TokenType::Number, "1", Some(Value::Number(1.0))),
             make_token(TokenType::BangEqual, "!=", None),
             make_token(TokenType::Number, "2", Some(Value::Number(2.0))),
+            semi(),
             eof(),
         ];
         let mut parser = Parser::new(tokens);
-        let expr = parser.parse().unwrap().unwrap();
-        assert!(matches!(expr, Expr::Binary { .. }));
+        let stmts = parser.parse().unwrap();
+        match &stmts[0] {
+            Stmt::Expression { expression } => {
+                assert!(matches!(expression, Expr::Binary { .. }));
+            }
+            _ => panic!("expected expression statement"),
+        }
     }
 
     // === errors ===
 
     #[test]
     fn error_on_unexpected_token() {
-        let tokens = vec![make_token(TokenType::Plus, "+", None), eof()];
+        let tokens = vec![make_token(TokenType::Plus, "+", None), semi(), eof()];
         let mut parser = Parser::new(tokens);
-        let result = parser.parse();
-        assert!(matches!(result, Err(ManoError::Parse { .. })));
+        parser.parse().unwrap();
+        assert!(!parser.errors().is_empty());
+        assert!(matches!(parser.errors()[0], ManoError::Parse { .. }));
     }
 
     #[test]
@@ -506,11 +722,13 @@ mod tests {
         let tokens = vec![
             make_token(TokenType::LeftParen, "(", None),
             make_token(TokenType::Number, "42", Some(Value::Number(42.0))),
+            semi(),
             eof(),
         ];
         let mut parser = Parser::new(tokens);
-        let result = parser.parse();
-        assert!(matches!(result, Err(ManoError::Parse { .. })));
+        parser.parse().unwrap();
+        assert!(!parser.errors().is_empty());
+        assert!(matches!(parser.errors()[0], ManoError::Parse { .. }));
     }
 
     // === comma ===
@@ -521,12 +739,18 @@ mod tests {
             make_token(TokenType::Number, "1", Some(Value::Number(1.0))),
             make_token(TokenType::Comma, ",", None),
             make_token(TokenType::Number, "2", Some(Value::Number(2.0))),
+            semi(),
             eof(),
         ];
         let mut parser = Parser::new(tokens);
-        let expr = parser.parse().unwrap().unwrap();
-        assert!(matches!(expr, Expr::Binary { .. }));
-        assert_eq!(expr.to_string(), "(, 1 2)");
+        let stmts = parser.parse().unwrap();
+        match &stmts[0] {
+            Stmt::Expression { expression } => {
+                assert!(matches!(expression, Expr::Binary { .. }));
+                assert_eq!(expression.to_string(), "(, 1 2)");
+            }
+            _ => panic!("expected expression statement"),
+        }
     }
 
     #[test]
@@ -537,36 +761,45 @@ mod tests {
             make_token(TokenType::Number, "2", Some(Value::Number(2.0))),
             make_token(TokenType::Comma, ",", None),
             make_token(TokenType::Number, "3", Some(Value::Number(3.0))),
+            semi(),
             eof(),
         ];
         let mut parser = Parser::new(tokens);
-        let expr = parser.parse().unwrap().unwrap();
-        // Left associative: (1, 2), 3
-        assert_eq!(expr.to_string(), "(, (, 1 2) 3)");
+        let stmts = parser.parse().unwrap();
+        match &stmts[0] {
+            Stmt::Expression { expression } => {
+                assert_eq!(expression.to_string(), "(, (, 1 2) 3)");
+            }
+            _ => panic!("expected expression statement"),
+        }
     }
 
     // === ternary ===
 
     #[test]
     fn parses_ternary_expression() {
-        // firmeza ? 1 : 2
         let tokens = vec![
             make_token(TokenType::True, "firmeza", None),
             make_token(TokenType::Question, "?", None),
             make_token(TokenType::Number, "1", Some(Value::Number(1.0))),
             make_token(TokenType::Colon, ":", None),
             make_token(TokenType::Number, "2", Some(Value::Number(2.0))),
+            semi(),
             eof(),
         ];
         let mut parser = Parser::new(tokens);
-        let expr = parser.parse().unwrap().unwrap();
-        assert!(matches!(expr, Expr::Ternary { .. }));
-        assert_eq!(expr.to_string(), "(?: firmeza 1 2)");
+        let stmts = parser.parse().unwrap();
+        match &stmts[0] {
+            Stmt::Expression { expression } => {
+                assert!(matches!(expression, Expr::Ternary { .. }));
+                assert_eq!(expression.to_string(), "(?: firmeza 1 2)");
+            }
+            _ => panic!("expected expression statement"),
+        }
     }
 
     #[test]
     fn ternary_is_right_associative() {
-        // a ? b : c ? d : e  =>  a ? b : (c ? d : e)
         let tokens = vec![
             make_token(TokenType::True, "firmeza", None),
             make_token(TokenType::Question, "?", None),
@@ -577,26 +810,33 @@ mod tests {
             make_token(TokenType::Number, "2", Some(Value::Number(2.0))),
             make_token(TokenType::Colon, ":", None),
             make_token(TokenType::Number, "3", Some(Value::Number(3.0))),
+            semi(),
             eof(),
         ];
         let mut parser = Parser::new(tokens);
-        let expr = parser.parse().unwrap().unwrap();
-        assert_eq!(expr.to_string(), "(?: firmeza 1 (?: treta 2 3))");
+        let stmts = parser.parse().unwrap();
+        match &stmts[0] {
+            Stmt::Expression { expression } => {
+                assert_eq!(expression.to_string(), "(?: firmeza 1 (?: treta 2 3))");
+            }
+            _ => panic!("expected expression statement"),
+        }
     }
 
     // === error productions ===
 
     #[test]
     fn error_on_binary_without_left_operand() {
-        // * 3 should error but parse the 3
         let tokens = vec![
             make_token(TokenType::Star, "*", None),
             make_token(TokenType::Number, "3", Some(Value::Number(3.0))),
+            semi(),
             eof(),
         ];
         let mut parser = Parser::new(tokens);
-        let result = parser.parse();
-        assert!(matches!(result, Err(ManoError::Parse { .. })));
+        parser.parse().unwrap();
+        assert!(!parser.errors().is_empty());
+        assert!(matches!(parser.errors()[0], ManoError::Parse { .. }));
     }
 
     #[test]
@@ -604,11 +844,13 @@ mod tests {
         let tokens = vec![
             make_token(TokenType::Plus, "+", None),
             make_token(TokenType::Number, "3", Some(Value::Number(3.0))),
+            semi(),
             eof(),
         ];
         let mut parser = Parser::new(tokens);
-        let result = parser.parse();
-        assert!(matches!(result, Err(ManoError::Parse { .. })));
+        parser.parse().unwrap();
+        assert!(!parser.errors().is_empty());
+        assert!(matches!(parser.errors()[0], ManoError::Parse { .. }));
     }
 
     // === synchronize ===
@@ -639,5 +881,239 @@ mod tests {
         let mut parser = Parser::new(tokens);
         parser.synchronize();
         assert_eq!(parser.peek().token_type, TokenType::Var);
+    }
+
+    // === variable declaration ===
+
+    #[test]
+    fn parses_var_declaration_with_initializer() {
+        // seLiga x = 42;
+        let tokens = vec![
+            make_token(TokenType::Var, "seLiga", None),
+            make_token(TokenType::Identifier, "x", None),
+            make_token(TokenType::Equal, "=", None),
+            make_token(TokenType::Number, "42", Some(Value::Number(42.0))),
+            semi(),
+            eof(),
+        ];
+        let mut parser = Parser::new(tokens);
+        let stmts = parser.parse().unwrap();
+        assert_eq!(stmts.len(), 1);
+        match &stmts[0] {
+            Stmt::Var { name, initializer } => {
+                assert_eq!(name.lexeme, "x");
+                assert!(initializer.is_some());
+            }
+            _ => panic!("expected Var statement"),
+        }
+    }
+
+    #[test]
+    fn parses_var_declaration_without_initializer() {
+        // seLiga x;
+        let tokens = vec![
+            make_token(TokenType::Var, "seLiga", None),
+            make_token(TokenType::Identifier, "x", None),
+            semi(),
+            eof(),
+        ];
+        let mut parser = Parser::new(tokens);
+        let stmts = parser.parse().unwrap();
+        assert_eq!(stmts.len(), 1);
+        match &stmts[0] {
+            Stmt::Var { name, initializer } => {
+                assert_eq!(name.lexeme, "x");
+                assert!(initializer.is_none());
+            }
+            _ => panic!("expected Var statement"),
+        }
+    }
+
+    // === assignment ===
+
+    #[test]
+    fn parses_assignment_expression() {
+        // x = 42;
+        let tokens = vec![
+            make_token(TokenType::Identifier, "x", None),
+            make_token(TokenType::Equal, "=", None),
+            make_token(TokenType::Number, "42", Some(Value::Number(42.0))),
+            semi(),
+            eof(),
+        ];
+        let mut parser = Parser::new(tokens);
+        let stmts = parser.parse().unwrap();
+        assert_eq!(stmts.len(), 1);
+        match &stmts[0] {
+            Stmt::Expression { expression } => {
+                assert!(matches!(expression, Expr::Assign { name, .. } if name.lexeme == "x"));
+            }
+            _ => panic!("expected expression statement"),
+        }
+    }
+
+    // === variable expression ===
+
+    #[test]
+    fn parses_variable_expression() {
+        // x;
+        let tokens = vec![make_token(TokenType::Identifier, "x", None), semi(), eof()];
+        let mut parser = Parser::new(tokens);
+        let stmts = parser.parse().unwrap();
+        assert_eq!(stmts.len(), 1);
+        match &stmts[0] {
+            Stmt::Expression { expression } => {
+                assert!(matches!(expression, Expr::Variable { name } if name.lexeme == "x"));
+            }
+            _ => panic!("expected expression statement"),
+        }
+    }
+
+    // === error recovery ===
+
+    #[test]
+    fn recovers_from_parse_error_and_continues() {
+        // First statement has error, second is valid
+        // seLiga = 42; salve 1;
+        let tokens = vec![
+            make_token(TokenType::Var, "seLiga", None),
+            make_token(TokenType::Equal, "=", None), // error: missing identifier
+            make_token(TokenType::Number, "42", Some(Value::Number(42.0))),
+            semi(),
+            make_token(TokenType::Print, "salve", None),
+            make_token(TokenType::Number, "1", Some(Value::Number(1.0))),
+            semi(),
+            eof(),
+        ];
+        let mut parser = Parser::new(tokens);
+        let result = parser.parse();
+        // Should still parse the second statement
+        assert!(result.is_ok());
+        let stmts = result.unwrap();
+        assert_eq!(stmts.len(), 1); // Only the valid statement
+        assert!(matches!(stmts[0], Stmt::Print { .. }));
+    }
+
+    // === statements ===
+
+    #[test]
+    fn parses_print_statement() {
+        let tokens = vec![
+            make_token(TokenType::Print, "salve", None),
+            make_token(TokenType::Number, "42", Some(Value::Number(42.0))),
+            semi(),
+            eof(),
+        ];
+        let mut parser = Parser::new(tokens);
+        let stmts = parser.parse().unwrap();
+        assert_eq!(stmts.len(), 1);
+        assert!(matches!(stmts[0], Stmt::Print { .. }));
+    }
+
+    #[test]
+    fn parses_multiple_statements() {
+        // salve 1; salve 2;
+        let tokens = vec![
+            make_token(TokenType::Print, "salve", None),
+            make_token(TokenType::Number, "1", Some(Value::Number(1.0))),
+            semi(),
+            make_token(TokenType::Print, "salve", None),
+            make_token(TokenType::Number, "2", Some(Value::Number(2.0))),
+            semi(),
+            eof(),
+        ];
+        let mut parser = Parser::new(tokens);
+        let stmts = parser.parse().unwrap();
+        assert_eq!(stmts.len(), 2);
+        assert!(matches!(stmts[0], Stmt::Print { .. }));
+        assert!(matches!(stmts[1], Stmt::Print { .. }));
+    }
+
+    // === block statements ===
+
+    #[test]
+    fn parses_empty_block() {
+        // { }
+        let tokens = vec![
+            make_token(TokenType::LeftBrace, "{", None),
+            make_token(TokenType::RightBrace, "}", None),
+            eof(),
+        ];
+        let mut parser = Parser::new(tokens);
+        let stmts = parser.parse().unwrap();
+        assert_eq!(stmts.len(), 1);
+        assert!(matches!(&stmts[0], Stmt::Block { statements } if statements.is_empty()));
+    }
+
+    #[test]
+    fn parses_block_with_statements() {
+        // { salve 1; salve 2; }
+        let tokens = vec![
+            make_token(TokenType::LeftBrace, "{", None),
+            make_token(TokenType::Print, "salve", None),
+            make_token(TokenType::Number, "1", Some(Value::Number(1.0))),
+            semi(),
+            make_token(TokenType::Print, "salve", None),
+            make_token(TokenType::Number, "2", Some(Value::Number(2.0))),
+            semi(),
+            make_token(TokenType::RightBrace, "}", None),
+            eof(),
+        ];
+        let mut parser = Parser::new(tokens);
+        let stmts = parser.parse().unwrap();
+        assert_eq!(stmts.len(), 1);
+        match &stmts[0] {
+            Stmt::Block { statements } => {
+                assert_eq!(statements.len(), 2);
+                assert!(
+                    matches!(&statements[0], Stmt::Print { expression: Expr::Literal { value: Value::Number(n) } } if *n == 1.0)
+                );
+                assert!(
+                    matches!(&statements[1], Stmt::Print { expression: Expr::Literal { value: Value::Number(n) } } if *n == 2.0)
+                );
+            }
+            _ => panic!("expected block"),
+        }
+    }
+
+    #[test]
+    fn parses_nested_blocks() {
+        // { { salve 1; } }
+        let tokens = vec![
+            make_token(TokenType::LeftBrace, "{", None),
+            make_token(TokenType::LeftBrace, "{", None),
+            make_token(TokenType::Print, "salve", None),
+            make_token(TokenType::Number, "1", Some(Value::Number(1.0))),
+            semi(),
+            make_token(TokenType::RightBrace, "}", None),
+            make_token(TokenType::RightBrace, "}", None),
+            eof(),
+        ];
+        let mut parser = Parser::new(tokens);
+        let stmts = parser.parse().unwrap();
+        assert_eq!(stmts.len(), 1);
+        match &stmts[0] {
+            Stmt::Block { statements } => {
+                assert_eq!(statements.len(), 1);
+                assert!(matches!(&statements[0], Stmt::Block { .. }));
+            }
+            _ => panic!("expected block"),
+        }
+    }
+
+    #[test]
+    fn error_on_invalid_assignment_target() {
+        // 1 = 2; (can't assign to a literal)
+        let tokens = vec![
+            make_token(TokenType::Number, "1", Some(Value::Number(1.0))),
+            make_token(TokenType::Equal, "=", None),
+            make_token(TokenType::Number, "2", Some(Value::Number(2.0))),
+            semi(),
+            eof(),
+        ];
+        let mut parser = Parser::new(tokens);
+        parser.parse().unwrap();
+        assert_eq!(parser.errors().len(), 1);
+        assert!(parser.errors()[0].to_string().contains("atribuir"));
     }
 }

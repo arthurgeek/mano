@@ -14,7 +14,7 @@ pub enum ManoError {
     #[error("[linha {line}] Ô lesado, esqueceu de fechar o comentário!")]
     UnterminatedBlockComment { line: usize },
 
-    #[error("[linha {line}] Deu mole, cumpadi: {message}")]
+    #[error("[linha {line}] Deu mole, maluco: {message}")]
     Parse { line: usize, message: String },
 
     #[error("[linha {line}] Deu ruim na execução, brother: {message}")]
@@ -60,7 +60,7 @@ mod tests {
         };
         assert_eq!(
             err.to_string(),
-            "[linha 5] Deu mole, cumpadi: Cadê o fecha parênteses?"
+            "[linha 5] Deu mole, maluco: Cadê o fecha parênteses?"
         );
     }
 

@@ -9,7 +9,7 @@ fn evaluates_simple_expression() {
     let mut stdout = Vec::new();
     let mut stderr = Vec::new();
 
-    let result = mano.run_with_output("(1 + 2)", &mut stdout, &mut stderr);
+    let result = mano.run_with_output("salve (1 + 2);", &mut stdout, &mut stderr);
 
     assert!(result.is_ok());
     let output = String::from_utf8(stdout).unwrap();
@@ -22,7 +22,7 @@ fn evaluates_comparison_operators() {
     let mut stdout = Vec::new();
     let mut stderr = Vec::new();
 
-    let result = mano.run_with_output("1 < 2", &mut stdout, &mut stderr);
+    let result = mano.run_with_output("salve 1 < 2;", &mut stdout, &mut stderr);
 
     assert!(result.is_ok());
     let output = String::from_utf8(stdout).unwrap();
@@ -35,7 +35,7 @@ fn evaluates_equality_operators() {
     let mut stdout = Vec::new();
     let mut stderr = Vec::new();
 
-    let result = mano.run_with_output("1 == 2", &mut stdout, &mut stderr);
+    let result = mano.run_with_output("salve 1 == 2;", &mut stdout, &mut stderr);
 
     assert!(result.is_ok());
     let output = String::from_utf8(stdout).unwrap();
@@ -48,7 +48,7 @@ fn evaluates_unary_operators() {
     let mut stdout = Vec::new();
     let mut stderr = Vec::new();
 
-    let result = mano.run_with_output("-42", &mut stdout, &mut stderr);
+    let result = mano.run_with_output("salve -42;", &mut stdout, &mut stderr);
 
     assert!(result.is_ok());
     let output = String::from_utf8(stdout).unwrap();
@@ -61,7 +61,7 @@ fn parses_boolean_literals() {
     let mut stdout = Vec::new();
     let mut stderr = Vec::new();
 
-    let result = mano.run_with_output("firmeza", &mut stdout, &mut stderr);
+    let result = mano.run_with_output("salve firmeza;", &mut stdout, &mut stderr);
 
     assert!(result.is_ok());
     let output = String::from_utf8(stdout).unwrap();
@@ -100,7 +100,7 @@ fn continues_scanning_after_error() {
 #[test]
 fn runs_file_with_mano_code() {
     let mut file = tempfile::NamedTempFile::new().unwrap();
-    writeln!(file, "1 + 2").unwrap();
+    writeln!(file, "salve 1 + 2;").unwrap();
 
     let mut mano = Mano::new();
     let result = mano.run_file(file.path());
@@ -120,7 +120,7 @@ fn evaluates_complex_expression() {
     let mut stdout = Vec::new();
     let mut stderr = Vec::new();
 
-    let result = mano.run_with_output("1 + 2 * 3", &mut stdout, &mut stderr);
+    let result = mano.run_with_output("salve 1 + 2 * 3;", &mut stdout, &mut stderr);
 
     assert!(result.is_ok());
     let output = String::from_utf8(stdout).unwrap();
@@ -134,7 +134,7 @@ fn parses_string_literal() {
     let mut stdout = Vec::new();
     let mut stderr = Vec::new();
 
-    let result = mano.run_with_output("\"e aí mano\"", &mut stdout, &mut stderr);
+    let result = mano.run_with_output("salve \"e aí mano\";", &mut stdout, &mut stderr);
 
     assert!(result.is_ok());
     let output = String::from_utf8(stdout).unwrap();

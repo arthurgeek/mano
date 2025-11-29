@@ -1,0 +1,5 @@
+// Erros de execucao
+salve -"salve";
+salve "e ai" - "parca";
+salve 1 + "truta";
+salve 1 < "vei";

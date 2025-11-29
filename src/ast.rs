@@ -25,6 +25,30 @@ pub enum Expr {
     Grouping {
         expression: Box<Expr>,
     },
+    Variable {
+        name: Token,
+    },
+    Assign {
+        name: Token,
+        value: Box<Expr>,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum Stmt {
+    Expression {
+        expression: Expr,
+    },
+    Print {
+        expression: Expr,
+    },
+    Var {
+        name: Token,
+        initializer: Option<Expr>,
+    },
+    Block {
+        statements: Vec<Stmt>,
+    },
 }
 
 impl fmt::Display for Expr {
@@ -43,6 +67,8 @@ impl fmt::Display for Expr {
             Expr::Unary { operator, right } => write!(f, "({} {})", operator.lexeme, right),
             Expr::Literal { value } => write!(f, "{}", value),
             Expr::Grouping { expression } => write!(f, "(group {})", expression),
+            Expr::Variable { name } => write!(f, "{}", name.lexeme),
+            Expr::Assign { name, value } => write!(f, "(= {} {})", name.lexeme, value),
         }
     }
 }
@@ -139,6 +165,82 @@ mod tests {
             }),
         };
         assert!(matches!(expr, Expr::Grouping { .. }));
+    }
+
+    #[test]
+    fn creates_variable_expression() {
+        let expr = Expr::Variable {
+            name: Token {
+                token_type: TokenType::Identifier,
+                lexeme: "x".to_string(),
+                literal: None,
+                line: 1,
+            },
+        };
+        assert!(matches!(expr, Expr::Variable { name } if name.lexeme == "x"));
+    }
+
+    #[test]
+    fn displays_variable_expression() {
+        let expr = Expr::Variable {
+            name: Token {
+                token_type: TokenType::Identifier,
+                lexeme: "meuMano".to_string(),
+                literal: None,
+                line: 1,
+            },
+        };
+        assert_eq!(expr.to_string(), "meuMano");
+    }
+
+    #[test]
+    fn creates_assign_expression() {
+        let expr = Expr::Assign {
+            name: Token {
+                token_type: TokenType::Identifier,
+                lexeme: "x".to_string(),
+                literal: None,
+                line: 1,
+            },
+            value: Box::new(Expr::Literal {
+                value: Value::Number(42.0),
+            }),
+        };
+        assert!(matches!(expr, Expr::Assign { name, .. } if name.lexeme == "x"));
+    }
+
+    #[test]
+    fn displays_assign_expression() {
+        let expr = Expr::Assign {
+            name: Token {
+                token_type: TokenType::Identifier,
+                lexeme: "x".to_string(),
+                literal: None,
+                line: 1,
+            },
+            value: Box::new(Expr::Literal {
+                value: Value::Number(42.0),
+            }),
+        };
+        assert_eq!(expr.to_string(), "(= x 42)");
+    }
+
+    #[test]
+    fn creates_block_statement() {
+        let stmt = Stmt::Block {
+            statements: vec![Stmt::Print {
+                expression: Expr::Literal {
+                    value: Value::Number(42.0),
+                },
+            }],
+        };
+        assert!(matches!(stmt, Stmt::Block { statements } if statements.len() == 1));
+    }
+
+    #[test]
+    fn creates_empty_block_statement() {
+        let stmt = Stmt::Block { statements: vec![] };
+        assert!(matches!(stmt, Stmt::Block { statements } if statements.is_empty()));
     }
 
     #[test]

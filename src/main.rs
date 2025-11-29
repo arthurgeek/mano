@@ -5,6 +5,77 @@ use mano::Mano;
 use rustyline::DefaultEditor;
 use rustyline::error::ReadlineError;
 
+struct ReplState {
+    buffer: String,
+    brace_depth: usize,
+}
+
+impl ReplState {
+    fn new() -> Self {
+        Self {
+            buffer: String::new(),
+            brace_depth: 0,
+        }
+    }
+
+    fn prompt(&self) -> String {
+        if self.brace_depth == 0 {
+            "> ".to_string()
+        } else {
+            format!("..{} ", self.brace_depth)
+        }
+    }
+
+    /// Returns true if ready to execute (braces balanced)
+    fn process_line(&mut self, line: &str) -> bool {
+        for ch in line.chars() {
+            match ch {
+                '{' => self.brace_depth += 1,
+                '}' => self.brace_depth = self.brace_depth.saturating_sub(1),
+                _ => {}
+            }
+        }
+
+        self.buffer.push_str(line);
+        self.buffer.push('\n');
+
+        self.brace_depth == 0
+    }
+
+    fn take_buffer(&mut self) -> String {
+        self.brace_depth = 0;
+        std::mem::take(&mut self.buffer)
+    }
+
+    fn cancel(&mut self) {
+        self.buffer.clear();
+        self.brace_depth = 0;
+    }
+
+    fn is_empty(&self) -> bool {
+        self.buffer.is_empty()
+    }
+
+    /// Check if input should be auto-printed (expression without semicolon)
+    fn should_auto_print(input: &str) -> bool {
+        let trimmed = input.trim();
+        if trimmed.is_empty() {
+            return false;
+        }
+        // Blocks are not auto-printed
+        if trimmed.ends_with('}') {
+            return false;
+        }
+        // If it ends with semicolon, it's a statement
+        !trimmed.ends_with(';')
+    }
+
+    /// Wrap input in a print statement for auto-printing
+    fn wrap_for_print(input: &str) -> String {
+        format!("salve {};", input.trim())
+    }
+}
+
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
 
@@ -30,20 +101,32 @@ fn main() -> ExitCode {
 
 fn run_repl(mano: &mut Mano) -> Result<(), mano::ManoError> {
     let mut rl = DefaultEditor::new().expect("Falha ao iniciar o REPL, bicho!");
+    let mut state = ReplState::new();
 
     loop {
-        match rl.readline("> ") {
+        match rl.readline(&state.prompt()) {
             Ok(line) => {
                 let _ = rl.add_history_entry(&line);
-                mano.reset_error();
-                mano.run(&line)?;
+
+                if state.process_line(&line) {
+                    let buffer = state.take_buffer();
+                    let source = if ReplState::should_auto_print(&buffer) {
+                        ReplState::wrap_for_print(&buffer)
+                    } else {
+                        buffer
+                    };
+                    mano.reset_error();
+                    mano.run_with_output(&source, std::io::stdout(), std::io::stderr())?;
+                }
             }
             Err(ReadlineError::Interrupted) => {
-                // Ctrl+C - exit
-                break;
+                if state.is_empty() {
+                    break;
+                }
+                state.cancel();
+                println!();
             }
             Err(ReadlineError::Eof) => {
-                // Ctrl+D - exit
                 break;
             }
             Err(err) => {
@@ -54,4 +137,142 @@ fn run_repl(mano: &mut Mano) -> Result<(), mano::ManoError> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn new_creates_empty_state() {
+        let state = ReplState::new();
+        assert!(state.is_empty());
+        assert_eq!(state.brace_depth, 0);
+    }
+
+    #[test]
+    fn prompt_returns_normal_when_not_in_block() {
+        let state = ReplState::new();
+        assert_eq!(state.prompt(), "> ");
+    }
+
+    #[test]
+    fn prompt_shows_depth_when_in_block() {
+        let mut state = ReplState::new();
+        state.process_line("{");
+        assert_eq!(state.prompt(), "..1 ");
+
+        state.process_line("{");
+        assert_eq!(state.prompt(), "..2 ");
+    }
+
+    #[test]
+    fn process_line_ready_when_braces_balanced() {
+        let mut state = ReplState::new();
+        assert!(state.process_line("salve 1;"));
+    }
+
+    #[test]
+    fn process_line_not_ready_when_braces_unbalanced() {
+        let mut state = ReplState::new();
+        assert!(!state.process_line("{"));
+        assert!(!state.process_line("salve 1;"));
+    }
+
+    #[test]
+    fn process_line_ready_when_block_closes() {
+        let mut state = ReplState::new();
+        state.process_line("{");
+        state.process_line("salve 1;");
+        assert!(state.process_line("}"));
+    }
+
+    #[test]
+    fn process_line_handles_nested_blocks() {
+        let mut state = ReplState::new();
+        state.process_line("{");
+        assert!(!state.process_line("{"));
+        assert!(!state.process_line("}"));
+        assert!(state.process_line("}"));
+    }
+
+    #[test]
+    fn take_buffer_returns_accumulated_lines() {
+        let mut state = ReplState::new();
+        state.process_line("{");
+        state.process_line("salve 1;");
+        state.process_line("}");
+
+        let buffer = state.take_buffer();
+        assert!(buffer.contains("{"));
+        assert!(buffer.contains("salve 1;"));
+        assert!(buffer.contains("}"));
+    }
+
+    #[test]
+    fn take_buffer_clears_state() {
+        let mut state = ReplState::new();
+        state.process_line("salve 1;");
+        state.take_buffer();
+        assert!(state.is_empty());
+    }
+
+    #[test]
+    fn cancel_clears_buffer_and_depth() {
+        let mut state = ReplState::new();
+        state.process_line("{");
+        state.process_line("salve 1;");
+        state.cancel();
+
+        assert!(state.is_empty());
+        assert_eq!(state.brace_depth, 0);
+        assert_eq!(state.prompt(), "> ");
+    }
+
+    #[test]
+    fn is_empty_false_when_has_content() {
+        let mut state = ReplState::new();
+        state.process_line("salve 1;");
+        assert!(!state.is_empty());
+    }
+
+    #[test]
+    fn handles_unmatched_closing_brace() {
+        let mut state = ReplState::new();
+        assert!(state.process_line("}"));
+        assert_eq!(state.brace_depth, 0);
+    }
+
+    #[test]
+    fn should_auto_print_expression_without_semicolon() {
+        assert!(ReplState::should_auto_print("1 + 2"));
+        assert!(ReplState::should_auto_print("\"mano\""));
+        assert!(ReplState::should_auto_print("x"));
+    }
+
+    #[test]
+    fn should_not_auto_print_statement_with_semicolon() {
+        assert!(!ReplState::should_auto_print("salve 1;"));
+        assert!(!ReplState::should_auto_print("1 + 2;"));
+        assert!(!ReplState::should_auto_print("seLiga x = 1;"));
+    }
+
+    #[test]
+    fn should_not_auto_print_blocks() {
+        assert!(!ReplState::should_auto_print("{ salve 1; }"));
+        assert!(!ReplState::should_auto_print("{\n}"));
+    }
+
+    #[test]
+    fn should_not_auto_print_empty_or_whitespace() {
+        assert!(!ReplState::should_auto_print(""));
+        assert!(!ReplState::should_auto_print("   "));
+        assert!(!ReplState::should_auto_print("\n"));
+    }
+
+    #[test]
+    fn wrap_for_print_adds_salve() {
+        assert_eq!(ReplState::wrap_for_print("a"), "salve a;");
+        assert_eq!(ReplState::wrap_for_print("\"mano\""), "salve \"mano\";");
+    }
 }

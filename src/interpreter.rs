@@ -1,12 +1,70 @@
-use crate::ast::Expr;
+use std::cell::RefCell;
+use std::io::Write;
+use std::rc::Rc;
+
+use crate::ast::{Expr, Stmt};
+use crate::environment::Environment;
 use crate::error::ManoError;
 use crate::token::{TokenType, Value};
 
-pub struct Interpreter;
+pub struct Interpreter {
+    environment: Rc<RefCell<Environment>>,
+}
 
 impl Interpreter {
     pub fn new() -> Self {
-        Self
+        Self {
+            environment: Rc::new(RefCell::new(Environment::new())),
+        }
+    }
+
+    pub fn execute(&mut self, stmt: &Stmt, output: &mut dyn Write) -> Result<(), ManoError> {
+        match stmt {
+            Stmt::Print { expression } => {
+                let value = self.interpret(expression)?;
+                writeln!(output, "{}", value)?;
+                Ok(())
+            }
+            Stmt::Expression { expression } => {
+                self.interpret(expression)?;
+                Ok(())
+            }
+            Stmt::Var { name, initializer } => {
+                match initializer {
+                    Some(expr) => {
+                        let value = self.interpret(expr)?;
+                        self.environment
+                            .borrow_mut()
+                            .define(name.lexeme.clone(), value);
+                    }
+                    None => {
+                        self.environment
+                            .borrow_mut()
+                            .define_uninitialized(name.lexeme.clone());
+                    }
+                };
+                Ok(())
+            }
+            Stmt::Block { statements } => self.execute_block(statements, output),
+        }
+    }
+
+    fn execute_block(
+        &mut self,
+        statements: &[Stmt],
+        output: &mut dyn Write,
+    ) -> Result<(), ManoError> {
+        let previous = Rc::clone(&self.environment);
+        self.environment = Rc::new(RefCell::new(Environment::with_enclosing(Rc::clone(
+            &previous,
+        ))));
+
+        let result = statements
+            .iter()
+            .try_for_each(|stmt| self.execute(stmt, output));
+
+        self.environment = previous;
+        result
     }
 
     pub fn interpret(&mut self, expr: &Expr) -> Result<Value, ManoError> {
@@ -87,6 +145,14 @@ impl Interpreter {
                 } else {
                     self.interpret(else_branch)
                 }
+            }
+            Expr::Variable { name } => self.environment.borrow().get(&name.lexeme, name.line),
+            Expr::Assign { name, value } => {
+                let val = self.interpret(value)?;
+                self.environment
+                    .borrow_mut()
+                    .assign(&name.lexeme, val.clone(), name.line)?;
+                Ok(val)
             }
         }
     }
@@ -668,5 +734,435 @@ mod tests {
         };
         let result = interpreter.interpret(&expr).unwrap();
         assert_eq!(result, Value::Number(15.0));
+    }
+
+    // === statements ===
+
+    #[test]
+    fn executes_print_statement() {
+        let mut interpreter = Interpreter::new();
+        let stmt = Stmt::Print {
+            expression: Expr::Literal {
+                value: Value::Number(42.0),
+            },
+        };
+        let mut output = Vec::new();
+        interpreter.execute(&stmt, &mut output).unwrap();
+        assert_eq!(String::from_utf8(output).unwrap(), "42\n");
+    }
+
+    #[test]
+    fn executes_expression_statement() {
+        let mut interpreter = Interpreter::new();
+        let stmt = Stmt::Expression {
+            expression: Expr::Binary {
+                left: Box::new(Expr::Literal {
+                    value: Value::Number(1.0),
+                }),
+                operator: make_token(crate::token::TokenType::Plus, "+", 1),
+                right: Box::new(Expr::Literal {
+                    value: Value::Number(2.0),
+                }),
+            },
+        };
+        let mut output = Vec::new();
+        // Expression statement evaluates but doesn't output
+        interpreter.execute(&stmt, &mut output).unwrap();
+        assert_eq!(output.len(), 0);
+    }
+
+    #[test]
+    fn print_statement_propagates_runtime_error() {
+        let mut interpreter = Interpreter::new();
+        // salve 1 + "mano"; -> runtime error (can't add number and string)
+        let stmt = Stmt::Print {
+            expression: Expr::Binary {
+                left: Box::new(Expr::Literal {
+                    value: Value::Number(1.0),
+                }),
+                operator: make_token(crate::token::TokenType::Plus, "+", 1),
+                right: Box::new(Expr::Literal {
+                    value: Value::String("mano".to_string()),
+                }),
+            },
+        };
+        let mut output = Vec::new();
+        let result = interpreter.execute(&stmt, &mut output);
+        assert!(matches!(result, Err(ManoError::Runtime { .. })));
+    }
+
+    // === variable declaration ===
+
+    #[test]
+    fn executes_var_declaration_and_access() {
+        let mut interpreter = Interpreter::new();
+        let mut output = Vec::new();
+
+        // seLiga x = 42;
+        let var_stmt = Stmt::Var {
+            name: crate::token::Token {
+                token_type: crate::token::TokenType::Identifier,
+                lexeme: "x".to_string(),
+                literal: None,
+                line: 1,
+            },
+            initializer: Some(Expr::Literal {
+                value: Value::Number(42.0),
+            }),
+        };
+        interpreter.execute(&var_stmt, &mut output).unwrap();
+
+        // salve x;
+        let print_stmt = Stmt::Print {
+            expression: Expr::Variable {
+                name: crate::token::Token {
+                    token_type: crate::token::TokenType::Identifier,
+                    lexeme: "x".to_string(),
+                    literal: None,
+                    line: 2,
+                },
+            },
+        };
+        interpreter.execute(&print_stmt, &mut output).unwrap();
+
+        assert_eq!(String::from_utf8(output).unwrap(), "42\n");
+    }
+
+    #[test]
+    fn executes_assignment() {
+        let mut interpreter = Interpreter::new();
+        let mut output = Vec::new();
+
+        // seLiga x = 1;
+        let var_stmt = Stmt::Var {
+            name: crate::token::Token {
+                token_type: crate::token::TokenType::Identifier,
+                lexeme: "x".to_string(),
+                literal: None,
+                line: 1,
+            },
+            initializer: Some(Expr::Literal {
+                value: Value::Number(1.0),
+            }),
+        };
+        interpreter.execute(&var_stmt, &mut output).unwrap();
+
+        // x = 42;
+        let assign_stmt = Stmt::Expression {
+            expression: Expr::Assign {
+                name: crate::token::Token {
+                    token_type: crate::token::TokenType::Identifier,
+                    lexeme: "x".to_string(),
+                    literal: None,
+                    line: 2,
+                },
+                value: Box::new(Expr::Literal {
+                    value: Value::Number(42.0),
+                }),
+            },
+        };
+        interpreter.execute(&assign_stmt, &mut output).unwrap();
+
+        // salve x;
+        let print_stmt = Stmt::Print {
+            expression: Expr::Variable {
+                name: crate::token::Token {
+                    token_type: crate::token::TokenType::Identifier,
+                    lexeme: "x".to_string(),
+                    literal: None,
+                    line: 3,
+                },
+            },
+        };
+        interpreter.execute(&print_stmt, &mut output).unwrap();
+
+        assert_eq!(String::from_utf8(output).unwrap(), "42\n");
+    }
+
+    #[test]
+    fn accessing_uninitialized_variable_errors() {
+        let mut interpreter = Interpreter::new();
+        let mut output = Vec::new();
+
+        // seLiga x;
+        let var_stmt = Stmt::Var {
+            name: crate::token::Token {
+                token_type: crate::token::TokenType::Identifier,
+                lexeme: "x".to_string(),
+                literal: None,
+                line: 1,
+            },
+            initializer: None,
+        };
+        interpreter.execute(&var_stmt, &mut output).unwrap();
+
+        // salve x; -- should error!
+        let print_stmt = Stmt::Print {
+            expression: Expr::Variable {
+                name: crate::token::Token {
+                    token_type: crate::token::TokenType::Identifier,
+                    lexeme: "x".to_string(),
+                    literal: None,
+                    line: 2,
+                },
+            },
+        };
+        let result = interpreter.execute(&print_stmt, &mut output);
+
+        assert!(matches!(result, Err(ManoError::Runtime { .. })));
+    }
+
+    #[test]
+    fn assigning_uninitialized_variable_works() {
+        let mut interpreter = Interpreter::new();
+        let mut output = Vec::new();
+
+        // seLiga x;
+        let var_stmt = Stmt::Var {
+            name: crate::token::Token {
+                token_type: crate::token::TokenType::Identifier,
+                lexeme: "x".to_string(),
+                literal: None,
+                line: 1,
+            },
+            initializer: None,
+        };
+        interpreter.execute(&var_stmt, &mut output).unwrap();
+
+        // x = 42;
+        let assign_stmt = Stmt::Expression {
+            expression: Expr::Assign {
+                name: crate::token::Token {
+                    token_type: crate::token::TokenType::Identifier,
+                    lexeme: "x".to_string(),
+                    literal: None,
+                    line: 2,
+                },
+                value: Box::new(Expr::Literal {
+                    value: Value::Number(42.0),
+                }),
+            },
+        };
+        interpreter.execute(&assign_stmt, &mut output).unwrap();
+
+        // salve x;
+        let print_stmt = Stmt::Print {
+            expression: Expr::Variable {
+                name: crate::token::Token {
+                    token_type: crate::token::TokenType::Identifier,
+                    lexeme: "x".to_string(),
+                    literal: None,
+                    line: 3,
+                },
+            },
+        };
+        interpreter.execute(&print_stmt, &mut output).unwrap();
+
+        assert_eq!(String::from_utf8(output).unwrap(), "42\n");
+    }
+
+    // === block statements ===
+
+    #[test]
+    fn executes_block_with_statements() {
+        let mut interpreter = Interpreter::new();
+        let mut output = Vec::new();
+
+        // { salve 1; salve 2; }
+        let block = Stmt::Block {
+            statements: vec![
+                Stmt::Print {
+                    expression: Expr::Literal {
+                        value: Value::Number(1.0),
+                    },
+                },
+                Stmt::Print {
+                    expression: Expr::Literal {
+                        value: Value::Number(2.0),
+                    },
+                },
+            ],
+        };
+        interpreter.execute(&block, &mut output).unwrap();
+        assert_eq!(String::from_utf8(output).unwrap(), "1\n2\n");
+    }
+
+    #[test]
+    fn block_scope_does_not_leak() {
+        let mut interpreter = Interpreter::new();
+        let mut output = Vec::new();
+
+        // { seLiga x = 42; }
+        let block = Stmt::Block {
+            statements: vec![Stmt::Var {
+                name: make_token(crate::token::TokenType::Identifier, "x", 1),
+                initializer: Some(Expr::Literal {
+                    value: Value::Number(42.0),
+                }),
+            }],
+        };
+        interpreter.execute(&block, &mut output).unwrap();
+
+        // x; (should error - x not defined in outer scope)
+        let var_expr = Expr::Variable {
+            name: make_token(crate::token::TokenType::Identifier, "x", 2),
+        };
+        let result = interpreter.interpret(&var_expr);
+        assert!(matches!(result, Err(ManoError::Runtime { .. })));
+    }
+
+    #[test]
+    fn block_reads_outer_scope() {
+        let mut interpreter = Interpreter::new();
+        let mut output = Vec::new();
+
+        // seLiga x = 42;
+        let var_stmt = Stmt::Var {
+            name: make_token(crate::token::TokenType::Identifier, "x", 1),
+            initializer: Some(Expr::Literal {
+                value: Value::Number(42.0),
+            }),
+        };
+        interpreter.execute(&var_stmt, &mut output).unwrap();
+
+        // { salve x; }
+        let block = Stmt::Block {
+            statements: vec![Stmt::Print {
+                expression: Expr::Variable {
+                    name: make_token(crate::token::TokenType::Identifier, "x", 2),
+                },
+            }],
+        };
+        interpreter.execute(&block, &mut output).unwrap();
+        assert_eq!(String::from_utf8(output).unwrap(), "42\n");
+    }
+
+    #[test]
+    fn block_shadows_outer_scope() {
+        let mut interpreter = Interpreter::new();
+        let mut output = Vec::new();
+
+        // seLiga x = 1;
+        let var_stmt = Stmt::Var {
+            name: make_token(crate::token::TokenType::Identifier, "x", 1),
+            initializer: Some(Expr::Literal {
+                value: Value::Number(1.0),
+            }),
+        };
+        interpreter.execute(&var_stmt, &mut output).unwrap();
+
+        // { seLiga x = 99; salve x; }
+        let block = Stmt::Block {
+            statements: vec![
+                Stmt::Var {
+                    name: make_token(crate::token::TokenType::Identifier, "x", 2),
+                    initializer: Some(Expr::Literal {
+                        value: Value::Number(99.0),
+                    }),
+                },
+                Stmt::Print {
+                    expression: Expr::Variable {
+                        name: make_token(crate::token::TokenType::Identifier, "x", 3),
+                    },
+                },
+            ],
+        };
+        interpreter.execute(&block, &mut output).unwrap();
+
+        // salve x; (should be 1 again)
+        let print_stmt = Stmt::Print {
+            expression: Expr::Variable {
+                name: make_token(crate::token::TokenType::Identifier, "x", 4),
+            },
+        };
+        interpreter.execute(&print_stmt, &mut output).unwrap();
+
+        assert_eq!(String::from_utf8(output).unwrap(), "99\n1\n");
+    }
+
+    #[test]
+    fn block_assignment_updates_outer_scope() {
+        let mut interpreter = Interpreter::new();
+        let mut output = Vec::new();
+
+        // seLiga x = 1;
+        let var_stmt = Stmt::Var {
+            name: make_token(crate::token::TokenType::Identifier, "x", 1),
+            initializer: Some(Expr::Literal {
+                value: Value::Number(1.0),
+            }),
+        };
+        interpreter.execute(&var_stmt, &mut output).unwrap();
+
+        // { x = 99; }
+        let block = Stmt::Block {
+            statements: vec![Stmt::Expression {
+                expression: Expr::Assign {
+                    name: make_token(crate::token::TokenType::Identifier, "x", 2),
+                    value: Box::new(Expr::Literal {
+                        value: Value::Number(99.0),
+                    }),
+                },
+            }],
+        };
+        interpreter.execute(&block, &mut output).unwrap();
+
+        // salve x; (should be 99)
+        let print_stmt = Stmt::Print {
+            expression: Expr::Variable {
+                name: make_token(crate::token::TokenType::Identifier, "x", 3),
+            },
+        };
+        interpreter.execute(&print_stmt, &mut output).unwrap();
+
+        assert_eq!(String::from_utf8(output).unwrap(), "99\n");
+    }
+
+    #[test]
+    fn block_error_restores_environment() {
+        let mut interpreter = Interpreter::new();
+        let mut output = Vec::new();
+
+        // seLiga x = 1;
+        let var_stmt = Stmt::Var {
+            name: make_token(crate::token::TokenType::Identifier, "x", 1),
+            initializer: Some(Expr::Literal {
+                value: Value::Number(1.0),
+            }),
+        };
+        interpreter.execute(&var_stmt, &mut output).unwrap();
+
+        // { seLiga y = 99; undefined_var; } - should error on undefined_var
+        let block = Stmt::Block {
+            statements: vec![
+                Stmt::Var {
+                    name: make_token(crate::token::TokenType::Identifier, "y", 2),
+                    initializer: Some(Expr::Literal {
+                        value: Value::Number(99.0),
+                    }),
+                },
+                Stmt::Expression {
+                    expression: Expr::Variable {
+                        name: make_token(crate::token::TokenType::Identifier, "undefined_var", 3),
+                    },
+                },
+            ],
+        };
+        let result = interpreter.execute(&block, &mut output);
+        assert!(matches!(result, Err(ManoError::Runtime { .. })));
+
+        // x should still be accessible (environment restored)
+        let var_expr = Expr::Variable {
+            name: make_token(crate::token::TokenType::Identifier, "x", 4),
+        };
+        let result = interpreter.interpret(&var_expr).unwrap();
+        assert_eq!(result, Value::Number(1.0));
+
+        // y should NOT be accessible (was in block scope)
+        let var_expr = Expr::Variable {
+            name: make_token(crate::token::TokenType::Identifier, "y", 5),
+        };
+        let result = interpreter.interpret(&var_expr);
+        assert!(matches!(result, Err(ManoError::Runtime { .. })));
     }
 }
