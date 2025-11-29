@@ -1,0 +1,38 @@
+// Exemplo com Unicode e emojis 🎉
+
+seLiga 🔥 = 100;
+seLiga 💰 = 50;
+seLiga 名前 = "マノ";
+seLiga имя = "мано";
+seLiga açúcar = 42;
+
+salve "=== Variáveis com emoji ===";
+salve 🔥;
+salve 💰;
+
+salve "=== Variáveis em japonês ===";
+salve 名前;
+
+salve "=== Variáveis em russo ===";
+salve имя;
+
+salve "=== Português com acento ===";
+salve açúcar;
+
+// Loop com emoji
+salve "=== Contando com 🚀 ===";
+seVira (seLiga 🚀 = 1; 🚀 <= 5; 🚀 = 🚀 + 1) {
+    salve 🚀;
+}
+
+// Condicionais
+seLiga 😊 = firmeza;
+seLiga 😢 = treta;
+
+sePá (😊 tamoJunto 🔥 > 50)
+    salve "Tá feliz e quente! 🔥😊";
+vacilou
+    salve "Não tá não...";
+
+sePá (😢 ow 💰 > 0)
+    salve "Pelo menos tem dinheiro! 💰";

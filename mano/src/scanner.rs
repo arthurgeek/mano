@@ -1,5 +1,6 @@
 use crate::error::ManoError;
 use crate::token::{Token, TokenType, Value};
+use unicode_properties::UnicodeEmoji;
 
 /// All mano keywords with their token types
 pub const KEYWORDS: &[(&str, TokenType)] = &[
@@ -148,7 +149,9 @@ impl<'a> Iterator for Scanner<'a> {
                 }
                 '"' => return Some(self.string()),
                 c if c.is_ascii_digit() => return Some(Ok(self.number())),
-                c if c.is_alphabetic() || c == '_' => return Some(Ok(self.identifier())),
+                c if c.is_alphabetic() || c == '_' || c.is_emoji_char() => {
+                    return Some(Ok(self.identifier()));
+                }
                 _ => {
                     return Some(Err(ManoError::Scan {
                         message: format!("E esse '{}' aí, truta?", c),
@@ -209,7 +212,10 @@ impl<'a> Scanner<'a> {
     }
 
     fn identifier(&mut self) -> Token {
-        while self.peek().is_some_and(|c| c.is_alphanumeric() || c == '_') {
+        while self
+            .peek()
+            .is_some_and(|c| c.is_alphanumeric() || c == '_' || c.is_emoji_char())
+        {
             self.advance();
         }
 
@@ -706,6 +712,24 @@ mod tests {
 
         assert_eq!(token.token_type, TokenType::Identifier);
         assert_eq!(token.lexeme, "variável");
+    }
+
+    #[test]
+    fn scans_identifier_with_emoji() {
+        let mut scanner = Scanner::new("🔥");
+        let token = scanner.next().unwrap().unwrap();
+
+        assert_eq!(token.token_type, TokenType::Identifier);
+        assert_eq!(token.lexeme, "🔥");
+    }
+
+    #[test]
+    fn scans_identifier_mixing_emoji_and_text() {
+        let mut scanner = Scanner::new("var🚀test");
+        let token = scanner.next().unwrap().unwrap();
+
+        assert_eq!(token.token_type, TokenType::Identifier);
+        assert_eq!(token.lexeme, "var🚀test");
     }
 
     #[test]

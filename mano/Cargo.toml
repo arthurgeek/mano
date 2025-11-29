@@ -8,3 +8,4 @@ tempfile = "3.23.0"
 
 [dependencies]
 thiserror = "2.0.17"
+unicode-properties = "0.1.4"

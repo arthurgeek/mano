@@ -53,6 +53,68 @@ salve (1 + 1, 2 + 2, 3 + 3);  // retorna 6
 // === String concatenação ===
 salve "São Paulo " + "é nóis!";
 
+// === Variáveis ===
+seLiga mano = "Brown";
+seLiga idade = 25;
+salve mano;
+salve idade;
+
+// === Variáveis com Unicode e Emoji ===
+seLiga 🔥 = 100;
+seLiga número = 42;
+seLiga имя = "мано";
+salve 🔥;
+salve número;
+salve имя;
+
+// === Blocos e escopo ===
+seLiga x = "fora";
+{
+    seLiga x = "dentro";
+    salve x;  // dentro
+}
+salve x;      // fora
+
+// === Atribuição ===
+seLiga contador = 0;
+contador = contador + 1;
+salve contador;
+
+// === Operadores lógicos (curto-circuito) ===
+salve firmeza tamoJunto firmeza;   // and: firmeza
+salve treta tamoJunto firmeza;     // and: treta (curto-circuito)
+salve firmeza ow treta;            // or: firmeza (curto-circuito)
+salve treta ow "fallback";         // or: "fallback"
+
+// === If/else ===
+sePá (5 > 3)
+    salve "cinco é maior que três";
+
+sePá (1 > 2)
+    salve "nunca";
+vacilou
+    salve "um não é maior que dois";
+
+// === While ===
+seLiga i = 0;
+segueOFluxo (i < 3) {
+    salve i;
+    i = i + 1;
+}
+
+// === For ===
+seVira (seLiga j = 10; j < 13; j = j + 1) {
+    salve j;
+}
+
+// === Break ===
+seLiga k = 0;
+segueOFluxo (k < 100) {
+    sePá (k == 3) saiFora;
+    salve k;
+    k = k + 1;
+}
+
 /*
    Comentário de bloco
    Pode ter várias linhas
@@ -61,4 +123,4 @@ salve "São Paulo " + "é nóis!";
 /* Comentários /* aninhados */ também funcionam! */
 
 // Expressão final pra mostrar que tá tudo certo
-salve (10 + 5) * 2 == 30 ? "firmeza total!" : "deu ruim";
+salve (10 + 5) * 2 == 30 ? "firmeza total! 🎉" : "deu ruim";
