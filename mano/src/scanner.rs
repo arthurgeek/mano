@@ -115,6 +115,7 @@ impl<'a> Iterator for Scanner<'a> {
                     }
                 }
                 '*' => return Some(Ok(self.add_token(TokenType::Star))),
+                '%' => return Some(Ok(self.add_token(TokenType::Percent))),
                 '!' => {
                     let token_type = if self.match_char('=') {
                         TokenType::BangEqual
@@ -436,6 +437,14 @@ mod tests {
             TokenType::Slash
         );
         assert_eq!(scanner.next().unwrap().unwrap().token_type, TokenType::Eof);
+    }
+
+    #[test]
+    fn scans_percent() {
+        let mut scanner = Scanner::new("%");
+        let token = scanner.next().unwrap().unwrap();
+        assert_eq!(token.token_type, TokenType::Percent);
+        assert_eq!(token.lexeme, "%");
     }
 
     #[test]

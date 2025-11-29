@@ -368,7 +368,7 @@ impl Parser {
     fn factor(&mut self) -> Result<Expr, ManoError> {
         let mut expr = self.unary()?;
 
-        while self.match_types(&[TokenType::Slash, TokenType::Star]) {
+        while self.match_types(&[TokenType::Slash, TokenType::Star, TokenType::Percent]) {
             let operator = self.previous().clone();
             let right = self.unary()?;
             expr = Expr::Binary {
@@ -721,6 +721,25 @@ mod tests {
             make_token(TokenType::Number, "6", Some(Value::Number(6.0))),
             make_token(TokenType::Slash, "/", None),
             make_token(TokenType::Number, "2", Some(Value::Number(2.0))),
+            semi(),
+            eof(),
+        ];
+        let mut parser = Parser::new(tokens);
+        let stmts = parser.parse().unwrap();
+        match &stmts[0] {
+            Stmt::Expression { expression } => {
+                assert!(matches!(expression, Expr::Binary { .. }));
+            }
+            _ => panic!("expected expression statement"),
+        }
+    }
+
+    #[test]
+    fn parses_modulo() {
+        let tokens = vec![
+            make_token(TokenType::Number, "10", Some(Value::Number(10.0))),
+            make_token(TokenType::Percent, "%", None),
+            make_token(TokenType::Number, "3", Some(Value::Number(3.0))),
             semi(),
             eof(),
         ];

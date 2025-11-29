@@ -1,0 +1,12 @@
+// FizzBuzz clássico, mano!
+
+seVira (seLiga n = 1; n <= 30; n = n + 1) {
+    sePá (n % 15 == 0)
+        salve "FizzBuzz";
+    vacilou sePá (n % 3 == 0)
+        salve "Fizz";
+    vacilou sePá (n % 5 == 0)
+        salve "Buzz";
+    vacilou
+        salve n;
+}

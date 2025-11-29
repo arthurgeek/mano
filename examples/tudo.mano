@@ -19,6 +19,7 @@ salve 1 + 2;           // soma
 salve 10 - 3;          // subtração
 salve 6 * 7;           // multiplicação
 salve 100 / 4;         // divisão
+salve 10 % 3;          // módulo (resto)
 
 // === Expressões complexas ===
 salve (1 + 2) * 3;     // agrupamento

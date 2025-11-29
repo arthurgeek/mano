@@ -127,13 +127,14 @@ impl Interpreter {
                 let right_val = self.interpret(right)?;
 
                 match operator.token_type {
-                    TokenType::Minus | TokenType::Slash | TokenType::Star => {
+                    TokenType::Minus | TokenType::Slash | TokenType::Star | TokenType::Percent => {
                         let (a, b) =
                             self.require_numbers(&left_val, &right_val, operator.span.clone())?;
                         match operator.token_type {
                             TokenType::Minus => Ok(Value::Number(a - b)),
                             TokenType::Slash => Ok(Value::Number(a / b)),
                             TokenType::Star => Ok(Value::Number(a * b)),
+                            TokenType::Percent => Ok(Value::Number(a % b)),
                             _ => unreachable!(),
                         }
                     }
@@ -468,6 +469,22 @@ mod tests {
         };
         let result = interpreter.interpret(&expr).unwrap();
         assert_eq!(result, Value::Number(5.0));
+    }
+
+    #[test]
+    fn evaluates_binary_percent() {
+        let mut interpreter = Interpreter::new();
+        let expr = Expr::Binary {
+            left: Box::new(Expr::Literal {
+                value: Value::Number(10.0),
+            }),
+            operator: make_token(crate::token::TokenType::Percent, "%", 1),
+            right: Box::new(Expr::Literal {
+                value: Value::Number(3.0),
+            }),
+        };
+        let result = interpreter.interpret(&expr).unwrap();
+        assert_eq!(result, Value::Number(1.0));
     }
 
     #[test]
