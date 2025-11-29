@@ -1,0 +1,12 @@
+// Fibonacci iterativo até 35
+seLiga n = 35;
+seLiga a = 0;
+seLiga b = 1;
+
+seVira (seLiga i = 0; i < n; i = i + 1) {
+    seLiga temp = a + b;
+    a = b;
+    b = temp;
+}
+
+salve b;

@@ -1,0 +1,19 @@
+// Conta quantos primos existem até 10000
+seLiga count = 0;
+
+seVira (seLiga n = 2; n <= 10000; n = n + 1) {
+    seLiga éPrimo = firmeza;
+    seLiga d = 2;
+
+    segueOFluxo (d * d <= n) {
+        sePá (n % d == 0) {
+            éPrimo = treta;
+            saiFora;
+        }
+        d = d + 1;
+    }
+
+    sePá (éPrimo) count = count + 1;
+}
+
+salve count;
