@@ -54,6 +54,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: taiki-e/install-action@cargo-tarpaulin
       - run: cargo tarpaulin --engine llvm --ignore-tests --out xml
-      - uses: codecov/codecov-action@v4
+      - uses: codecov/codecov-action@v5
         with:
           fail_ci_if_error: false
+          token: ${{ secrets.CODECOV_TOKEN }}

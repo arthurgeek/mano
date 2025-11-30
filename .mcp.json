@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "mano": {
+      "command": "./target/debug/mano-mcp",
+      "args": ["./target/debug/mano"]
+    }
+  }
+}
