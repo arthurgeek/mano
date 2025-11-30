@@ -1,5 +1,7 @@
 # mano 🔥
 
+[![codecov](https://codecov.io/github/arthurgeek/mano/graph/badge.svg?token=viCGjxJMh7)](https://codecov.io/github/arthurgeek/mano)
+
 A tree-walking interpreter implemented in Rust, following the [Crafting Interpreters](https://craftinginterpreters.com/) book. All keywords use São Paulo "mano" slang, and error messages roast you.
 
 **This project exists to learn about interpreters, language design, LSPs, and Rust.** It's not meant for production use — it's meant for learning and having fun along the way.
