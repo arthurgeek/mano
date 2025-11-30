@@ -9,13 +9,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Build Commands
 
 ```bash
-cargo build              # Build the project
-cargo run                # Run the interpreter (REPL mode)
-cargo run -- <file>.mano # Run a .mano script file
-cargo test               # Run all tests
-cargo test <test_name>   # Run a single test
-cargo clippy             # Lint the code
-cargo fmt                # Format the code
+cargo build                          # Build the project
+cargo run -p mano-cli                # Run the interpreter (REPL mode)
+cargo run -p mano-cli -- <file>.mano # Run a .mano script file
+cargo test                           # Run all tests
+cargo test <test_name>               # Run a single test
+cargo clippy                         # Lint the code
+cargo fmt                            # Format the code
 cargo tarpaulin --engine llvm --ignore-tests  # Code coverage
 ```
 

@@ -1,0 +1,5 @@
+[default]
+engine = "Llvm"
+ignore-tests = true
+branch = true
+exclude-files = ["**/tests/**"]

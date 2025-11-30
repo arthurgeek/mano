@@ -1,0 +1,66 @@
+{
+  "name": "mano-lang",
+  "displayName": "mano",
+  "description": "Language support for mano programming language",
+  "version": "0.1.0",
+  "publisher": "mano",
+  "engines": {
+    "vscode": "^1.75.0"
+  },
+  "categories": [
+    "Programming Languages"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "languages": [
+      {
+        "id": "mano",
+        "aliases": [
+          "mano",
+          "Mano"
+        ],
+        "extensions": [
+          ".mano"
+        ],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "mano",
+        "scopeName": "source.mano",
+        "path": "./syntaxes/mano.tmLanguage.json"
+      }
+    ],
+    "configuration": {
+      "type": "object",
+      "title": "mano",
+      "properties": {
+        "mano.server.path": {
+          "type": "string",
+          "default": "mano-lsp",
+          "description": "Path to the mano-lsp binary"
+        }
+      }
+    },
+    "commands": [
+      {
+        "command": "mano.restartServer",
+        "title": "Mano: Restart Language Server"
+      }
+    ]
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./"
+  },
+  "dependencies": {
+    "vscode-languageclient": "^9.0.1"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/vscode": "^1.75.0",
+    "typescript": "^5.0.0"
+  }
+}

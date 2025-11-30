@@ -2,6 +2,16 @@ use crate::error::ManoError;
 use crate::token::{Token, TokenType, Value};
 use unicode_properties::UnicodeEmoji;
 
+/// Check if a character can start an identifier
+pub fn is_identifier_start(c: char) -> bool {
+    !c.is_ascii_digit() && (c.is_alphabetic() || c == '_' || c.is_emoji_char())
+}
+
+/// Check if a character can continue an identifier
+pub fn is_identifier_char(c: char) -> bool {
+    c.is_alphanumeric() || c == '_' || c.is_emoji_char()
+}
+
 /// All mano keywords with their token types
 pub const KEYWORDS: &[(&str, TokenType)] = &[
     ("bagulho", TokenType::Class),
@@ -150,7 +160,7 @@ impl<'a> Iterator for Scanner<'a> {
                 }
                 '"' => return Some(self.string()),
                 c if c.is_ascii_digit() => return Some(Ok(self.number())),
-                c if c.is_alphabetic() || c == '_' || c.is_emoji_char() => {
+                c if is_identifier_start(c) => {
                     return Some(Ok(self.identifier()));
                 }
                 _ => {
@@ -213,10 +223,7 @@ impl<'a> Scanner<'a> {
     }
 
     fn identifier(&mut self) -> Token {
-        while self
-            .peek()
-            .is_some_and(|c| c.is_alphanumeric() || c == '_' || c.is_emoji_char())
-        {
+        while self.peek().is_some_and(is_identifier_char) {
             self.advance();
         }
 
@@ -878,5 +885,32 @@ mod tests {
         assert_eq!(tokens[0].token_type, TokenType::Print); // salve
         assert_eq!(tokens[1].token_type, TokenType::Number); // 42
         assert_eq!(tokens[2].token_type, TokenType::Eof);
+    }
+
+    #[test]
+    fn is_identifier_start_accepts_letters_underscore_emoji() {
+        assert!(is_identifier_start('a'));
+        assert!(is_identifier_start('Z'));
+        assert!(is_identifier_start('_'));
+        assert!(is_identifier_start('é'));
+        assert!(is_identifier_start('🔥'));
+
+        assert!(!is_identifier_start('0'));
+        assert!(!is_identifier_start(' '));
+        assert!(!is_identifier_start('+'));
+    }
+
+    #[test]
+    fn is_identifier_char_accepts_letters_digits_underscore_emoji() {
+        assert!(is_identifier_char('a'));
+        assert!(is_identifier_char('Z'));
+        assert!(is_identifier_char('_'));
+        assert!(is_identifier_char('0'));
+        assert!(is_identifier_char('9'));
+        assert!(is_identifier_char('é'));
+        assert!(is_identifier_char('🔥'));
+
+        assert!(!is_identifier_char(' '));
+        assert!(!is_identifier_char('+'));
     }
 }

@@ -51,6 +51,7 @@ impl Parser {
     }
 
     fn var_declaration(&mut self) -> Result<Stmt, ManoError> {
+        let start = self.previous().span.start;
         let name = self
             .consume(TokenType::Identifier, "Cadê o nome da variável, parça?")?
             .clone();
@@ -61,11 +62,16 @@ impl Parser {
             None
         };
 
-        self.consume(
+        let semi = self.consume(
             TokenType::Semicolon,
             "Cadê o ';' depois da declaração, véi?",
         )?;
-        Ok(Stmt::Var { name, initializer })
+        let end = semi.span.end;
+        Ok(Stmt::Var {
+            name,
+            initializer,
+            span: start..end,
+        })
     }
 
     fn statement(&mut self) -> Result<Stmt, ManoError> {
@@ -95,10 +101,11 @@ impl Parser {
             });
         }
         self.consume(TokenType::Semicolon, "Cadê o ';' depois do saiFora, véi?")?;
-        Ok(Stmt::Break)
+        Ok(Stmt::Break { span: 0..0 })
     }
 
     fn for_statement(&mut self) -> Result<Stmt, ManoError> {
+        let start = self.previous().span.start;
         self.consume(TokenType::LeftParen, "Cadê o '(' depois do seVira, mano?")?;
 
         // Initializer
@@ -133,11 +140,19 @@ impl Parser {
         let body_result = self.statement();
         self.loop_depth -= 1;
         let mut body = body_result?;
+        let end = self.previous().span.end;
 
         // Desugar: add increment to end of body
         if let Some(inc) = increment {
             body = Stmt::Block {
-                statements: vec![body, Stmt::Expression { expression: inc }],
+                statements: vec![
+                    body,
+                    Stmt::Expression {
+                        expression: inc,
+                        span: 0..0,
+                    },
+                ],
+                span: 0..0,
             };
         }
 
@@ -145,12 +160,14 @@ impl Parser {
         body = Stmt::While {
             condition,
             body: Box::new(body),
+            span: 0..0,
         };
 
-        // Desugar: add initializer
+        // Desugar: add initializer (outer block gets the full span)
         if let Some(init) = initializer {
             body = Stmt::Block {
                 statements: vec![init, body],
+                span: start..end,
             };
         }
 
@@ -158,6 +175,7 @@ impl Parser {
     }
 
     fn while_statement(&mut self) -> Result<Stmt, ManoError> {
+        let start = self.previous().span.start;
         self.consume(
             TokenType::LeftParen,
             "Cadê o '(' depois do segueOFluxo, mano?",
@@ -169,18 +187,31 @@ impl Parser {
         let body_result = self.statement();
         self.loop_depth -= 1;
         let body = Box::new(body_result?);
+        let end = self.previous().span.end;
 
-        Ok(Stmt::While { condition, body })
+        Ok(Stmt::While {
+            condition,
+            body,
+            span: start..end,
+        })
     }
 
     fn if_statement(&mut self) -> Result<Stmt, ManoError> {
+        let start = self.previous().span.start;
         self.consume(TokenType::LeftParen, "Cadê o '(' depois do sePá, mano?")?;
         let condition = self.expression()?;
         self.consume(TokenType::RightParen, "Cadê o ')' depois da condição, véi?")?;
 
         let then_branch = Box::new(self.statement()?);
+        let mut end = self.previous().span.end;
         let else_branch = if self.match_types(&[TokenType::Else]) {
-            Some(Box::new(self.statement()?))
+            let else_start = self.previous().span.start;
+            let body = self.statement()?;
+            end = self.previous().span.end;
+            Some(Box::new(Stmt::Else {
+                body: Box::new(body),
+                span: else_start..end,
+            }))
         } else {
             None
         };
@@ -189,10 +220,12 @@ impl Parser {
             condition,
             then_branch,
             else_branch,
+            span: start..end,
         })
     }
 
     fn block(&mut self) -> Result<Stmt, ManoError> {
+        let start = self.previous().span.start;
         let mut statements = Vec::new();
 
         while !self.check(&TokenType::RightBrace) && !self.is_at_end() {
@@ -201,23 +234,37 @@ impl Parser {
             }
         }
 
-        self.consume(
+        let closing = self.consume(
             TokenType::RightBrace,
             "Cadê o '}' pra fechar o bloco, mano?",
         )?;
-        Ok(Stmt::Block { statements })
+        let end = closing.span.end;
+        Ok(Stmt::Block {
+            statements,
+            span: start..end,
+        })
     }
 
     fn print_statement(&mut self) -> Result<Stmt, ManoError> {
+        let start = self.previous().span.start;
         let expression = self.expression()?;
-        self.consume(TokenType::Semicolon, "Cadê o ';' depois do salve, mano?")?;
-        Ok(Stmt::Print { expression })
+        let semi = self.consume(TokenType::Semicolon, "Cadê o ';' depois do salve, mano?")?;
+        let end = semi.span.end;
+        Ok(Stmt::Print {
+            expression,
+            span: start..end,
+        })
     }
 
     fn expression_statement(&mut self) -> Result<Stmt, ManoError> {
+        let start = self.peek().span.start;
         let expression = self.expression()?;
-        self.consume(TokenType::Semicolon, "Cadê o ';' no final, chapa?")?;
-        Ok(Stmt::Expression { expression })
+        let semi = self.consume(TokenType::Semicolon, "Cadê o ';' no final, chapa?")?;
+        let end = semi.span.end;
+        Ok(Stmt::Expression {
+            expression,
+            span: start..end,
+        })
     }
 
     fn expression(&mut self) -> Result<Expr, ManoError> {
@@ -556,7 +603,7 @@ mod tests {
         let stmts = parser.parse().unwrap();
         assert_eq!(stmts.len(), 1);
         match &stmts[0] {
-            Stmt::Expression { expression } => {
+            Stmt::Expression { expression, .. } => {
                 assert!(
                     matches!(expression, Expr::Literal { value: Value::Number(n) } if *n == 42.0)
                 );
@@ -579,7 +626,7 @@ mod tests {
         let mut parser = Parser::new(tokens);
         let stmts = parser.parse().unwrap();
         match &stmts[0] {
-            Stmt::Expression { expression } => {
+            Stmt::Expression { expression, .. } => {
                 assert!(
                     matches!(expression, Expr::Literal { value: Value::String(s) } if s == "mano")
                 );
@@ -594,7 +641,7 @@ mod tests {
         let mut parser = Parser::new(tokens);
         let stmts = parser.parse().unwrap();
         match &stmts[0] {
-            Stmt::Expression { expression } => {
+            Stmt::Expression { expression, .. } => {
                 assert!(matches!(
                     expression,
                     Expr::Literal {
@@ -612,7 +659,7 @@ mod tests {
         let mut parser = Parser::new(tokens);
         let stmts = parser.parse().unwrap();
         match &stmts[0] {
-            Stmt::Expression { expression } => {
+            Stmt::Expression { expression, .. } => {
                 assert!(matches!(
                     expression,
                     Expr::Literal {
@@ -630,7 +677,7 @@ mod tests {
         let mut parser = Parser::new(tokens);
         let stmts = parser.parse().unwrap();
         match &stmts[0] {
-            Stmt::Expression { expression } => {
+            Stmt::Expression { expression, .. } => {
                 assert!(matches!(expression, Expr::Literal { value: Value::Nil }));
             }
             _ => panic!("expected expression statement"),
@@ -649,7 +696,7 @@ mod tests {
         let mut parser = Parser::new(tokens);
         let stmts = parser.parse().unwrap();
         match &stmts[0] {
-            Stmt::Expression { expression } => {
+            Stmt::Expression { expression, .. } => {
                 assert!(matches!(expression, Expr::Grouping { .. }));
             }
             _ => panic!("expected expression statement"),
@@ -669,7 +716,7 @@ mod tests {
         let mut parser = Parser::new(tokens);
         let stmts = parser.parse().unwrap();
         match &stmts[0] {
-            Stmt::Expression { expression } => {
+            Stmt::Expression { expression, .. } => {
                 assert!(matches!(expression, Expr::Unary { .. }));
             }
             _ => panic!("expected expression statement"),
@@ -687,7 +734,7 @@ mod tests {
         let mut parser = Parser::new(tokens);
         let stmts = parser.parse().unwrap();
         match &stmts[0] {
-            Stmt::Expression { expression } => {
+            Stmt::Expression { expression, .. } => {
                 assert!(matches!(expression, Expr::Unary { .. }));
             }
             _ => panic!("expected expression statement"),
@@ -708,7 +755,7 @@ mod tests {
         let mut parser = Parser::new(tokens);
         let stmts = parser.parse().unwrap();
         match &stmts[0] {
-            Stmt::Expression { expression } => {
+            Stmt::Expression { expression, .. } => {
                 assert!(matches!(expression, Expr::Binary { .. }));
             }
             _ => panic!("expected expression statement"),
@@ -727,7 +774,7 @@ mod tests {
         let mut parser = Parser::new(tokens);
         let stmts = parser.parse().unwrap();
         match &stmts[0] {
-            Stmt::Expression { expression } => {
+            Stmt::Expression { expression, .. } => {
                 assert!(matches!(expression, Expr::Binary { .. }));
             }
             _ => panic!("expected expression statement"),
@@ -746,7 +793,7 @@ mod tests {
         let mut parser = Parser::new(tokens);
         let stmts = parser.parse().unwrap();
         match &stmts[0] {
-            Stmt::Expression { expression } => {
+            Stmt::Expression { expression, .. } => {
                 assert!(matches!(expression, Expr::Binary { .. }));
             }
             _ => panic!("expected expression statement"),
@@ -767,7 +814,7 @@ mod tests {
         let mut parser = Parser::new(tokens);
         let stmts = parser.parse().unwrap();
         match &stmts[0] {
-            Stmt::Expression { expression } => {
+            Stmt::Expression { expression, .. } => {
                 assert!(matches!(expression, Expr::Binary { .. }));
             }
             _ => panic!("expected expression statement"),
@@ -786,7 +833,7 @@ mod tests {
         let mut parser = Parser::new(tokens);
         let stmts = parser.parse().unwrap();
         match &stmts[0] {
-            Stmt::Expression { expression } => {
+            Stmt::Expression { expression, .. } => {
                 assert!(matches!(expression, Expr::Binary { .. }));
             }
             _ => panic!("expected expression statement"),
@@ -807,7 +854,7 @@ mod tests {
         let mut parser = Parser::new(tokens);
         let stmts = parser.parse().unwrap();
         match &stmts[0] {
-            Stmt::Expression { expression } => {
+            Stmt::Expression { expression, .. } => {
                 assert!(matches!(expression, Expr::Binary { .. }));
             }
             _ => panic!("expected expression statement"),
@@ -826,7 +873,7 @@ mod tests {
         let mut parser = Parser::new(tokens);
         let stmts = parser.parse().unwrap();
         match &stmts[0] {
-            Stmt::Expression { expression } => {
+            Stmt::Expression { expression, .. } => {
                 assert!(matches!(expression, Expr::Binary { .. }));
             }
             _ => panic!("expected expression statement"),
@@ -847,7 +894,7 @@ mod tests {
         let mut parser = Parser::new(tokens);
         let stmts = parser.parse().unwrap();
         match &stmts[0] {
-            Stmt::Expression { expression } => {
+            Stmt::Expression { expression, .. } => {
                 assert!(matches!(expression, Expr::Binary { .. }));
             }
             _ => panic!("expected expression statement"),
@@ -866,7 +913,7 @@ mod tests {
         let mut parser = Parser::new(tokens);
         let stmts = parser.parse().unwrap();
         match &stmts[0] {
-            Stmt::Expression { expression } => {
+            Stmt::Expression { expression, .. } => {
                 assert!(matches!(expression, Expr::Binary { .. }));
             }
             _ => panic!("expected expression statement"),
@@ -914,7 +961,7 @@ mod tests {
         let mut parser = Parser::new(tokens);
         let stmts = parser.parse().unwrap();
         match &stmts[0] {
-            Stmt::Expression { expression } => {
+            Stmt::Expression { expression, .. } => {
                 assert!(matches!(expression, Expr::Binary { .. }));
                 assert_eq!(expression.to_string(), "(, 1 2)");
             }
@@ -936,7 +983,7 @@ mod tests {
         let mut parser = Parser::new(tokens);
         let stmts = parser.parse().unwrap();
         match &stmts[0] {
-            Stmt::Expression { expression } => {
+            Stmt::Expression { expression, .. } => {
                 assert_eq!(expression.to_string(), "(, (, 1 2) 3)");
             }
             _ => panic!("expected expression statement"),
@@ -959,7 +1006,7 @@ mod tests {
         let mut parser = Parser::new(tokens);
         let stmts = parser.parse().unwrap();
         match &stmts[0] {
-            Stmt::Expression { expression } => {
+            Stmt::Expression { expression, .. } => {
                 assert!(matches!(expression, Expr::Ternary { .. }));
                 assert_eq!(expression.to_string(), "(?: firmeza 1 2)");
             }
@@ -985,7 +1032,7 @@ mod tests {
         let mut parser = Parser::new(tokens);
         let stmts = parser.parse().unwrap();
         match &stmts[0] {
-            Stmt::Expression { expression } => {
+            Stmt::Expression { expression, .. } => {
                 assert_eq!(expression.to_string(), "(?: firmeza 1 (?: treta 2 3))");
             }
             _ => panic!("expected expression statement"),
@@ -1071,7 +1118,9 @@ mod tests {
         let stmts = parser.parse().unwrap();
         assert_eq!(stmts.len(), 1);
         match &stmts[0] {
-            Stmt::Var { name, initializer } => {
+            Stmt::Var {
+                name, initializer, ..
+            } => {
                 assert_eq!(name.lexeme, "x");
                 assert!(initializer.is_some());
             }
@@ -1092,7 +1141,9 @@ mod tests {
         let stmts = parser.parse().unwrap();
         assert_eq!(stmts.len(), 1);
         match &stmts[0] {
-            Stmt::Var { name, initializer } => {
+            Stmt::Var {
+                name, initializer, ..
+            } => {
                 assert_eq!(name.lexeme, "x");
                 assert!(initializer.is_none());
             }
@@ -1116,7 +1167,7 @@ mod tests {
         let stmts = parser.parse().unwrap();
         assert_eq!(stmts.len(), 1);
         match &stmts[0] {
-            Stmt::Expression { expression } => {
+            Stmt::Expression { expression, .. } => {
                 assert!(matches!(expression, Expr::Assign { name, .. } if name.lexeme == "x"));
             }
             _ => panic!("expected expression statement"),
@@ -1133,7 +1184,7 @@ mod tests {
         let stmts = parser.parse().unwrap();
         assert_eq!(stmts.len(), 1);
         match &stmts[0] {
-            Stmt::Expression { expression } => {
+            Stmt::Expression { expression, .. } => {
                 assert!(matches!(expression, Expr::Variable { name } if name.lexeme == "x"));
             }
             _ => panic!("expected expression statement"),
@@ -1213,7 +1264,7 @@ mod tests {
         let mut parser = Parser::new(tokens);
         let stmts = parser.parse().unwrap();
         assert_eq!(stmts.len(), 1);
-        assert!(matches!(&stmts[0], Stmt::Block { statements } if statements.is_empty()));
+        assert!(matches!(&stmts[0], Stmt::Block { statements, .. } if statements.is_empty()));
     }
 
     #[test]
@@ -1234,13 +1285,13 @@ mod tests {
         let stmts = parser.parse().unwrap();
         assert_eq!(stmts.len(), 1);
         match &stmts[0] {
-            Stmt::Block { statements } => {
+            Stmt::Block { statements, .. } => {
                 assert_eq!(statements.len(), 2);
                 assert!(
-                    matches!(&statements[0], Stmt::Print { expression: Expr::Literal { value: Value::Number(n) } } if *n == 1.0)
+                    matches!(&statements[0], Stmt::Print { expression: Expr::Literal { value: Value::Number(n) }, .. } if *n == 1.0)
                 );
                 assert!(
-                    matches!(&statements[1], Stmt::Print { expression: Expr::Literal { value: Value::Number(n) } } if *n == 2.0)
+                    matches!(&statements[1], Stmt::Print { expression: Expr::Literal { value: Value::Number(n) }, .. } if *n == 2.0)
                 );
             }
             _ => panic!("expected block"),
@@ -1264,7 +1315,7 @@ mod tests {
         let stmts = parser.parse().unwrap();
         assert_eq!(stmts.len(), 1);
         match &stmts[0] {
-            Stmt::Block { statements } => {
+            Stmt::Block { statements, .. } => {
                 assert_eq!(statements.len(), 1);
                 assert!(matches!(&statements[0], Stmt::Block { .. }));
             }
@@ -1336,6 +1387,7 @@ mod tests {
                 condition,
                 then_branch,
                 else_branch,
+                ..
             } => {
                 assert!(matches!(
                     condition,
@@ -1375,6 +1427,7 @@ mod tests {
                 condition,
                 then_branch,
                 else_branch,
+                ..
             } => {
                 assert!(matches!(
                     condition,
@@ -1386,7 +1439,7 @@ mod tests {
                 assert!(else_branch.is_some());
                 assert!(matches!(
                     else_branch.as_ref().unwrap().as_ref(),
-                    Stmt::Print { .. }
+                    Stmt::Else { body, .. } if matches!(body.as_ref(), Stmt::Print { .. })
                 ));
             }
             _ => panic!("expected If statement"),
@@ -1435,7 +1488,7 @@ mod tests {
         let stmts = parser.parse().unwrap();
         assert_eq!(stmts.len(), 1);
         match &stmts[0] {
-            Stmt::Expression { expression } => {
+            Stmt::Expression { expression, .. } => {
                 assert!(matches!(expression, Expr::Logical { .. }));
                 assert_eq!(expression.to_string(), "(ow firmeza treta)");
             }
@@ -1457,7 +1510,7 @@ mod tests {
         let stmts = parser.parse().unwrap();
         assert_eq!(stmts.len(), 1);
         match &stmts[0] {
-            Stmt::Expression { expression } => {
+            Stmt::Expression { expression, .. } => {
                 assert!(matches!(expression, Expr::Logical { .. }));
                 assert_eq!(expression.to_string(), "(tamoJunto firmeza treta)");
             }
@@ -1480,7 +1533,7 @@ mod tests {
         let mut parser = Parser::new(tokens);
         let stmts = parser.parse().unwrap();
         match &stmts[0] {
-            Stmt::Expression { expression } => {
+            Stmt::Expression { expression, .. } => {
                 assert_eq!(expression.to_string(), "(ow a (tamoJunto b c))");
             }
             _ => panic!("expected expression statement"),
@@ -1502,7 +1555,7 @@ mod tests {
         let mut parser = Parser::new(tokens);
         let stmts = parser.parse().unwrap();
         match &stmts[0] {
-            Stmt::Expression { expression } => {
+            Stmt::Expression { expression, .. } => {
                 assert_eq!(expression.to_string(), "(ow (ow a b) c)");
             }
             _ => panic!("expected expression statement"),
@@ -1528,7 +1581,9 @@ mod tests {
         let stmts = parser.parse().unwrap();
         assert_eq!(stmts.len(), 1);
         match &stmts[0] {
-            Stmt::While { condition, body } => {
+            Stmt::While {
+                condition, body, ..
+            } => {
                 assert!(matches!(
                     condition,
                     Expr::Literal {
@@ -1601,7 +1656,7 @@ mod tests {
         assert_eq!(stmts.len(), 1);
         // Should be a block containing var decl and while
         match &stmts[0] {
-            Stmt::Block { statements } => {
+            Stmt::Block { statements, .. } => {
                 assert_eq!(statements.len(), 2);
                 assert!(matches!(&statements[0], Stmt::Var { .. }));
                 assert!(matches!(&statements[1], Stmt::While { .. }));
@@ -1667,7 +1722,7 @@ mod tests {
         let stmts = parser.parse().unwrap();
         assert_eq!(stmts.len(), 1);
         match &stmts[0] {
-            Stmt::Block { statements } => {
+            Stmt::Block { statements, .. } => {
                 assert_eq!(statements.len(), 2);
                 match &statements[1] {
                     Stmt::While { condition, .. } => {
@@ -1717,7 +1772,7 @@ mod tests {
         assert_eq!(stmts.len(), 1);
         // Should desugar to block with expression statement + while
         match &stmts[0] {
-            Stmt::Block { statements } => {
+            Stmt::Block { statements, .. } => {
                 assert_eq!(statements.len(), 2);
                 // First should be expression statement (i = 0)
                 assert!(matches!(&statements[0], Stmt::Expression { .. }));
@@ -1747,7 +1802,7 @@ mod tests {
         assert_eq!(stmts.len(), 1);
         match &stmts[0] {
             Stmt::While { body, .. } => {
-                assert!(matches!(body.as_ref(), Stmt::Break));
+                assert!(matches!(body.as_ref(), Stmt::Break { .. }));
             }
             _ => panic!("expected While"),
         }
@@ -1772,7 +1827,7 @@ mod tests {
         // for desugars to while
         match &stmts[0] {
             Stmt::While { body, .. } => {
-                assert!(matches!(body.as_ref(), Stmt::Break));
+                assert!(matches!(body.as_ref(), Stmt::Break { .. }));
             }
             _ => panic!("expected While (desugared for)"),
         }
@@ -1812,5 +1867,241 @@ mod tests {
         let errors = parser.take_errors();
         assert!(errors.is_empty());
         assert_eq!(stmts.len(), 1);
+    }
+
+    // === statement spans ===
+
+    fn make_token_at(
+        token_type: TokenType,
+        lexeme: &str,
+        literal: Option<Value>,
+        start: usize,
+    ) -> Token {
+        Token {
+            token_type,
+            lexeme: lexeme.to_string(),
+            literal,
+            span: start..start + lexeme.len(),
+        }
+    }
+
+    #[test]
+    fn print_statement_has_correct_span() {
+        // "salve 1;"
+        // 01234567
+        let tokens = vec![
+            make_token_at(TokenType::Print, "salve", None, 0),
+            make_token_at(TokenType::Number, "1", Some(Value::Number(1.0)), 6),
+            make_token_at(TokenType::Semicolon, ";", None, 7),
+            make_token_at(TokenType::Eof, "", None, 8),
+        ];
+        let mut parser = Parser::new(tokens);
+        let stmts = parser.parse().unwrap();
+        assert_eq!(stmts.len(), 1);
+        match &stmts[0] {
+            Stmt::Print { span, .. } => {
+                assert_eq!(*span, 0..8, "print statement span should be 0..8");
+            }
+            _ => panic!("expected print statement"),
+        }
+    }
+
+    #[test]
+    fn var_statement_has_correct_span() {
+        // "seLiga x = 1;"
+        // 0123456789012
+        let tokens = vec![
+            make_token_at(TokenType::Var, "seLiga", None, 0),
+            make_token_at(TokenType::Identifier, "x", None, 7),
+            make_token_at(TokenType::Equal, "=", None, 9),
+            make_token_at(TokenType::Number, "1", Some(Value::Number(1.0)), 11),
+            make_token_at(TokenType::Semicolon, ";", None, 12),
+            make_token_at(TokenType::Eof, "", None, 13),
+        ];
+        let mut parser = Parser::new(tokens);
+        let stmts = parser.parse().unwrap();
+        assert_eq!(stmts.len(), 1);
+        match &stmts[0] {
+            Stmt::Var { span, .. } => {
+                assert_eq!(*span, 0..13, "var statement span should be 0..13");
+            }
+            _ => panic!("expected var statement"),
+        }
+    }
+
+    #[test]
+    fn if_else_multiline_has_correct_span() {
+        // "sePá (firmeza)\n    salve 1;\nvacilou\n    salve 2;"
+        //  0         1         2         3         4
+        //  0123456789012345678901234567890123456789012345678
+        // Line 1: "sePá (firmeza)\n"     = 0..15
+        // Line 2: "    salve 1;\n"       = 15..28
+        // Line 3: "vacilou\n"            = 28..36
+        // Line 4: "    salve 2;"         = 36..48
+        let tokens = vec![
+            make_token_at(TokenType::If, "sePá", None, 0),
+            make_token_at(TokenType::LeftParen, "(", None, 5),
+            make_token_at(TokenType::True, "firmeza", None, 6),
+            make_token_at(TokenType::RightParen, ")", None, 13),
+            make_token_at(TokenType::Print, "salve", None, 19),
+            make_token_at(TokenType::Number, "1", Some(Value::Number(1.0)), 25),
+            make_token_at(TokenType::Semicolon, ";", None, 26),
+            make_token_at(TokenType::Else, "vacilou", None, 28),
+            make_token_at(TokenType::Print, "salve", None, 40),
+            make_token_at(TokenType::Number, "2", Some(Value::Number(2.0)), 46),
+            make_token_at(TokenType::Semicolon, ";", None, 47),
+            make_token_at(TokenType::Eof, "", None, 48),
+        ];
+        let mut parser = Parser::new(tokens);
+        let stmts = parser.parse().unwrap();
+        assert_eq!(stmts.len(), 1);
+        match &stmts[0] {
+            Stmt::If {
+                span, else_branch, ..
+            } => {
+                assert!(else_branch.is_some(), "should have else branch");
+                assert_eq!(
+                    *span,
+                    0..48,
+                    "if-else statement span should cover all lines"
+                );
+            }
+            _ => panic!("expected if statement"),
+        }
+    }
+
+    #[test]
+    fn else_branch_has_span_starting_from_vacilou() {
+        // "sePá (firmeza)\n    salve 1;\nvacilou\n    salve 2;"
+        //  0         1         2         3         4
+        //  0123456789012345678901234567890123456789012345678
+        // Line 3: "vacilou\n"            = 28..36
+        // Line 4: "    salve 2;"         = 36..48
+        // else branch should span 28..48 (from "vacilou" to end)
+        let tokens = vec![
+            make_token_at(TokenType::If, "sePá", None, 0),
+            make_token_at(TokenType::LeftParen, "(", None, 5),
+            make_token_at(TokenType::True, "firmeza", None, 6),
+            make_token_at(TokenType::RightParen, ")", None, 13),
+            make_token_at(TokenType::Print, "salve", None, 19),
+            make_token_at(TokenType::Number, "1", Some(Value::Number(1.0)), 25),
+            make_token_at(TokenType::Semicolon, ";", None, 26),
+            make_token_at(TokenType::Else, "vacilou", None, 28),
+            make_token_at(TokenType::Print, "salve", None, 40),
+            make_token_at(TokenType::Number, "2", Some(Value::Number(2.0)), 46),
+            make_token_at(TokenType::Semicolon, ";", None, 47),
+            make_token_at(TokenType::Eof, "", None, 48),
+        ];
+        let mut parser = Parser::new(tokens);
+        let stmts = parser.parse().unwrap();
+        match &stmts[0] {
+            Stmt::If { else_branch, .. } => {
+                let else_stmt = else_branch.as_ref().expect("should have else branch");
+                match else_stmt.as_ref() {
+                    Stmt::Else { span, .. } => {
+                        assert_eq!(*span, 28..48, "else branch span should start from vacilou");
+                    }
+                    other => panic!("expected Stmt::Else, got {:?}", other),
+                }
+            }
+            _ => panic!("expected if statement"),
+        }
+    }
+
+    #[test]
+    fn while_multiline_has_correct_span() {
+        // "segueOFluxo (firmeza)\n    salve 1;"
+        //  0         1         2         3
+        //  01234567890123456789012345678901234
+        // Line 1: "segueOFluxo (firmeza)\n" = 0..22
+        // Line 2: "    salve 1;"            = 22..34
+        let tokens = vec![
+            make_token_at(TokenType::While, "segueOFluxo", None, 0),
+            make_token_at(TokenType::LeftParen, "(", None, 12),
+            make_token_at(TokenType::True, "firmeza", None, 13),
+            make_token_at(TokenType::RightParen, ")", None, 20),
+            make_token_at(TokenType::Print, "salve", None, 26),
+            make_token_at(TokenType::Number, "1", Some(Value::Number(1.0)), 32),
+            make_token_at(TokenType::Semicolon, ";", None, 33),
+            make_token_at(TokenType::Eof, "", None, 34),
+        ];
+        let mut parser = Parser::new(tokens);
+        let stmts = parser.parse().unwrap();
+        assert_eq!(stmts.len(), 1);
+        match &stmts[0] {
+            Stmt::While { span, .. } => {
+                assert_eq!(*span, 0..34, "while statement span should cover all lines");
+            }
+            _ => panic!("expected while statement"),
+        }
+    }
+
+    #[test]
+    fn block_multiline_has_correct_span() {
+        // "{\n    salve 1;\n}"
+        //  0         1
+        //  0123456789012345
+        // Line 1: "{\n"          = 0..2
+        // Line 2: "    salve 1;\n" = 2..15
+        // Line 3: "}"            = 15..16
+        let tokens = vec![
+            make_token_at(TokenType::LeftBrace, "{", None, 0),
+            make_token_at(TokenType::Print, "salve", None, 6),
+            make_token_at(TokenType::Number, "1", Some(Value::Number(1.0)), 12),
+            make_token_at(TokenType::Semicolon, ";", None, 13),
+            make_token_at(TokenType::RightBrace, "}", None, 15),
+            make_token_at(TokenType::Eof, "", None, 16),
+        ];
+        let mut parser = Parser::new(tokens);
+        let stmts = parser.parse().unwrap();
+        assert_eq!(stmts.len(), 1);
+        match &stmts[0] {
+            Stmt::Block { span, .. } => {
+                assert_eq!(*span, 0..16, "block statement span should cover all lines");
+            }
+            _ => panic!("expected block statement"),
+        }
+    }
+
+    #[test]
+    fn for_loop_multiline_has_correct_span() {
+        // "seVira (seLiga i = 0; i < 3; i = i + 1)\n    salve i;"
+        // For loop desugars to a block, but the outer span should cover the whole thing
+        //  0         1         2         3         4         5
+        //  012345678901234567890123456789012345678901234567890123
+        // "seVira (seLiga i = 0; i < 3; i = i + 1)\n    salve i;"
+        let tokens = vec![
+            make_token_at(TokenType::For, "seVira", None, 0),
+            make_token_at(TokenType::LeftParen, "(", None, 7),
+            make_token_at(TokenType::Var, "seLiga", None, 8),
+            make_token_at(TokenType::Identifier, "i", None, 15),
+            make_token_at(TokenType::Equal, "=", None, 17),
+            make_token_at(TokenType::Number, "0", Some(Value::Number(0.0)), 19),
+            make_token_at(TokenType::Semicolon, ";", None, 20),
+            make_token_at(TokenType::Identifier, "i", None, 22),
+            make_token_at(TokenType::Less, "<", None, 24),
+            make_token_at(TokenType::Number, "3", Some(Value::Number(3.0)), 26),
+            make_token_at(TokenType::Semicolon, ";", None, 27),
+            make_token_at(TokenType::Identifier, "i", None, 29),
+            make_token_at(TokenType::Equal, "=", None, 31),
+            make_token_at(TokenType::Identifier, "i", None, 33),
+            make_token_at(TokenType::Plus, "+", None, 35),
+            make_token_at(TokenType::Number, "1", Some(Value::Number(1.0)), 37),
+            make_token_at(TokenType::RightParen, ")", None, 38),
+            make_token_at(TokenType::Print, "salve", None, 44),
+            make_token_at(TokenType::Identifier, "i", None, 50),
+            make_token_at(TokenType::Semicolon, ";", None, 51),
+            make_token_at(TokenType::Eof, "", None, 52),
+        ];
+        let mut parser = Parser::new(tokens);
+        let stmts = parser.parse().unwrap();
+        assert_eq!(stmts.len(), 1);
+        // For loop desugars to Block containing [var_decl, while]
+        match &stmts[0] {
+            Stmt::Block { span, .. } => {
+                assert_eq!(*span, 0..52, "for loop span should cover all lines");
+            }
+            _ => panic!("expected block statement (desugared for)"),
+        }
     }
 }

@@ -1,0 +1,66 @@
+{
+  "scopeName": "source.mano",
+  "patterns": [
+    { "include": "#comments" },
+    { "include": "#keywords" },
+    { "include": "#strings" },
+    { "include": "#numbers" }
+  ],
+  "repository": {
+    "comments": {
+      "patterns": [
+        {
+          "name": "comment.line.double-slash.mano",
+          "match": "//.*$"
+        },
+        {
+          "name": "comment.block.mano",
+          "begin": "/\\*",
+          "end": "\\*/",
+          "patterns": [
+            { "include": "#block-comment" }
+          ]
+        }
+      ]
+    },
+    "block-comment": {
+      "name": "comment.block.mano",
+      "begin": "/\\*",
+      "end": "\\*/",
+      "patterns": [
+        { "include": "#block-comment" }
+      ]
+    },
+    "keywords": {
+      "patterns": [
+        {
+          "name": "keyword.control.mano",
+          "match": "\\b(sePá|vacilou|segueOFluxo|seVira|saiFora)\\b"
+        },
+        {
+          "name": "keyword.other.mano",
+          "match": "\\b(salve|oiSumida|seLiga|tamoJunto|ow)\\b"
+        },
+        {
+          "name": "constant.language.mano",
+          "match": "\\b(firmeza|treta|nadaNão)\\b"
+        }
+      ]
+    },
+    "strings": {
+      "name": "string.quoted.double.mano",
+      "begin": "\"",
+      "end": "\"",
+      "patterns": [
+        {
+          "name": "constant.character.escape.mano",
+          "match": "\\\\."
+        }
+      ]
+    },
+    "numbers": {
+      "name": "constant.numeric.mano",
+      "match": "\\b\\d+(\\.\\d+)?\\b"
+    }
+  }
+}

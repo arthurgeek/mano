@@ -8,8 +8,10 @@ mod token;
 
 use std::io::Write;
 
+pub use ast::Stmt;
 pub use error::ManoError;
-pub use scanner::{KEYWORDS, Scanner};
+pub use parser::Parser;
+pub use scanner::{KEYWORDS, Scanner, is_identifier_char, is_identifier_start};
 pub use token::{Token, TokenType, Value};
 
 pub struct Mano {

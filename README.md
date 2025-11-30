@@ -2,13 +2,15 @@
 
 A tree-walking interpreter implemented in Rust, following the [Crafting Interpreters](https://craftinginterpreters.com/) book. All keywords use São Paulo "mano" slang, and error messages roast you.
 
-**This project exists to learn about interpreters, language design, and Rust.** It's not meant for production use — it's meant for learning and having fun along the way.
+**This project exists to learn about interpreters, language design, LSPs, and Rust.** It's not meant for production use — it's meant for learning and having fun along the way.
 
 ## Features
 
 - Full lexer, parser, and tree-walking interpreter
 - Brazilian Portuguese keywords with cultural flavor
 - REPL with syntax highlighting and auto-complete
+- Language Server Protocol (LSP) with diagnostics and completions
+- VS Code extension with syntax highlighting and LSP integration
 - Beautiful error messages using [ariadne](https://github.com/zesterer/ariadne)
 - Unicode identifiers (including emoji! `seLiga 🔥 = 100`)
 - [Turing complete](examples/minsky.mano) (proven via Minsky machine simulation)
@@ -64,10 +66,37 @@ oiSumida 🔥;
 
 ```bash
 # REPL mode
-cargo run
+cargo run -p mano-cli
 
 # Run a script
-cargo run -- script.mano
+cargo run -p mano-cli -- script.mano
+```
+
+## Editor Support
+
+The `mano-lsp` crate implements the [Language Server Protocol](https://microsoft.github.io/language-server-protocol/), providing editor-agnostic tooling. This was built to learn how LSPs work!
+
+**LSP Features:**
+- Real-time diagnostics (scan and parse errors)
+- Auto-completion (keywords and variables)
+- Go to definition / Find references
+- Rename symbol
+- Document symbols
+- Hover information
+- Code folding
+
+**VS Code Extension** (`editors/vscode`):
+- Syntax highlighting (TextMate grammar)
+- Bracket matching and auto-closing
+- Code folding and region markers
+- Smart indentation and comment continuation
+- Unicode/emoji word selection
+- LSP client integration
+
+```bash
+# Build LSP and install extension
+cargo build --release -p mano-lsp
+ln -s $(pwd)/editors/vscode ~/.vscode/extensions/mano.mano-lang-0.1.0
 ```
 
 ## Development

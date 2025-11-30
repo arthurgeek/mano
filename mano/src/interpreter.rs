@@ -24,16 +24,18 @@ impl Interpreter {
 
     pub fn execute(&mut self, stmt: &Stmt, output: &mut dyn Write) -> Result<(), ManoError> {
         match stmt {
-            Stmt::Print { expression } => {
+            Stmt::Print { expression, .. } => {
                 let value = self.interpret(expression)?;
                 writeln!(output, "{}", value)?;
                 Ok(())
             }
-            Stmt::Expression { expression } => {
+            Stmt::Expression { expression, .. } => {
                 self.interpret(expression)?;
                 Ok(())
             }
-            Stmt::Var { name, initializer } => {
+            Stmt::Var {
+                name, initializer, ..
+            } => {
                 match initializer {
                     Some(expr) => {
                         let value = self.interpret(expr)?;
@@ -49,11 +51,12 @@ impl Interpreter {
                 };
                 Ok(())
             }
-            Stmt::Block { statements } => self.execute_block(statements, output),
+            Stmt::Block { statements, .. } => self.execute_block(statements, output),
             Stmt::If {
                 condition,
                 then_branch,
                 else_branch,
+                ..
             } => {
                 let condition_value = self.interpret(condition)?;
                 if self.is_truthy(&condition_value) {
@@ -64,7 +67,9 @@ impl Interpreter {
                     Ok(())
                 }
             }
-            Stmt::While { condition, body } => {
+            Stmt::While {
+                condition, body, ..
+            } => {
                 loop {
                     let condition_value = self.interpret(condition)?;
                     if !self.is_truthy(&condition_value) {
@@ -78,7 +83,8 @@ impl Interpreter {
                 }
                 Ok(())
             }
-            Stmt::Break => Err(ManoError::Break),
+            Stmt::Break { .. } => Err(ManoError::Break),
+            Stmt::Else { body, .. } => self.execute(body, output),
         }
     }
 
@@ -818,11 +824,9 @@ mod tests {
     #[test]
     fn executes_print_statement() {
         let mut interpreter = Interpreter::new();
-        let stmt = Stmt::Print {
-            expression: Expr::Literal {
-                value: Value::Number(42.0),
-            },
-        };
+        let stmt = Stmt::print(Expr::Literal {
+            value: Value::Number(42.0),
+        });
         let mut output = Vec::new();
         interpreter.execute(&stmt, &mut output).unwrap();
         assert_eq!(String::from_utf8(output).unwrap(), "42\n");
@@ -831,17 +835,15 @@ mod tests {
     #[test]
     fn executes_expression_statement() {
         let mut interpreter = Interpreter::new();
-        let stmt = Stmt::Expression {
-            expression: Expr::Binary {
-                left: Box::new(Expr::Literal {
-                    value: Value::Number(1.0),
-                }),
-                operator: make_token(crate::token::TokenType::Plus, "+", 1),
-                right: Box::new(Expr::Literal {
-                    value: Value::Number(2.0),
-                }),
-            },
-        };
+        let stmt = Stmt::expression(Expr::Binary {
+            left: Box::new(Expr::Literal {
+                value: Value::Number(1.0),
+            }),
+            operator: make_token(crate::token::TokenType::Plus, "+", 1),
+            right: Box::new(Expr::Literal {
+                value: Value::Number(2.0),
+            }),
+        });
         let mut output = Vec::new();
         // Expression statement evaluates but doesn't output
         interpreter.execute(&stmt, &mut output).unwrap();
@@ -852,17 +854,15 @@ mod tests {
     fn print_statement_propagates_runtime_error() {
         let mut interpreter = Interpreter::new();
         // salve 1 + "mano"; -> runtime error (can't add number and string)
-        let stmt = Stmt::Print {
-            expression: Expr::Binary {
-                left: Box::new(Expr::Literal {
-                    value: Value::Number(1.0),
-                }),
-                operator: make_token(crate::token::TokenType::Plus, "+", 1),
-                right: Box::new(Expr::Literal {
-                    value: Value::String("mano".to_string()),
-                }),
-            },
-        };
+        let stmt = Stmt::print(Expr::Binary {
+            left: Box::new(Expr::Literal {
+                value: Value::Number(1.0),
+            }),
+            operator: make_token(crate::token::TokenType::Plus, "+", 1),
+            right: Box::new(Expr::Literal {
+                value: Value::String("mano".to_string()),
+            }),
+        });
         let mut output = Vec::new();
         let result = interpreter.execute(&stmt, &mut output);
         assert!(matches!(result, Err(ManoError::Runtime { .. })));
@@ -876,30 +876,18 @@ mod tests {
         let mut output = Vec::new();
 
         // seLiga x = 42;
-        let var_stmt = Stmt::Var {
-            name: crate::token::Token {
-                token_type: crate::token::TokenType::Identifier,
-                lexeme: "x".to_string(),
-                literal: None,
-                span: 0..1,
-            },
-            initializer: Some(Expr::Literal {
+        let var_stmt = Stmt::var(
+            make_token(crate::token::TokenType::Identifier, "x", 0),
+            Some(Expr::Literal {
                 value: Value::Number(42.0),
             }),
-        };
+        );
         interpreter.execute(&var_stmt, &mut output).unwrap();
 
         // salve x;
-        let print_stmt = Stmt::Print {
-            expression: Expr::Variable {
-                name: crate::token::Token {
-                    token_type: crate::token::TokenType::Identifier,
-                    lexeme: "x".to_string(),
-                    literal: None,
-                    span: 0..1,
-                },
-            },
-        };
+        let print_stmt = Stmt::print(Expr::Variable {
+            name: make_token(crate::token::TokenType::Identifier, "x", 0),
+        });
         interpreter.execute(&print_stmt, &mut output).unwrap();
 
         assert_eq!(String::from_utf8(output).unwrap(), "42\n");
@@ -911,46 +899,27 @@ mod tests {
         let mut output = Vec::new();
 
         // seLiga x = 1;
-        let var_stmt = Stmt::Var {
-            name: crate::token::Token {
-                token_type: crate::token::TokenType::Identifier,
-                lexeme: "x".to_string(),
-                literal: None,
-                span: 0..1,
-            },
-            initializer: Some(Expr::Literal {
+        let var_stmt = Stmt::var(
+            make_token(crate::token::TokenType::Identifier, "x", 0),
+            Some(Expr::Literal {
                 value: Value::Number(1.0),
             }),
-        };
+        );
         interpreter.execute(&var_stmt, &mut output).unwrap();
 
         // x = 42;
-        let assign_stmt = Stmt::Expression {
-            expression: Expr::Assign {
-                name: crate::token::Token {
-                    token_type: crate::token::TokenType::Identifier,
-                    lexeme: "x".to_string(),
-                    literal: None,
-                    span: 0..1,
-                },
-                value: Box::new(Expr::Literal {
-                    value: Value::Number(42.0),
-                }),
-            },
-        };
+        let assign_stmt = Stmt::expression(Expr::Assign {
+            name: make_token(crate::token::TokenType::Identifier, "x", 0),
+            value: Box::new(Expr::Literal {
+                value: Value::Number(42.0),
+            }),
+        });
         interpreter.execute(&assign_stmt, &mut output).unwrap();
 
         // salve x;
-        let print_stmt = Stmt::Print {
-            expression: Expr::Variable {
-                name: crate::token::Token {
-                    token_type: crate::token::TokenType::Identifier,
-                    lexeme: "x".to_string(),
-                    literal: None,
-                    span: 0..1,
-                },
-            },
-        };
+        let print_stmt = Stmt::print(Expr::Variable {
+            name: make_token(crate::token::TokenType::Identifier, "x", 0),
+        });
         interpreter.execute(&print_stmt, &mut output).unwrap();
 
         assert_eq!(String::from_utf8(output).unwrap(), "42\n");
@@ -962,28 +931,16 @@ mod tests {
         let mut output = Vec::new();
 
         // seLiga x;
-        let var_stmt = Stmt::Var {
-            name: crate::token::Token {
-                token_type: crate::token::TokenType::Identifier,
-                lexeme: "x".to_string(),
-                literal: None,
-                span: 0..1,
-            },
-            initializer: None,
-        };
+        let var_stmt = Stmt::var(
+            make_token(crate::token::TokenType::Identifier, "x", 0),
+            None,
+        );
         interpreter.execute(&var_stmt, &mut output).unwrap();
 
         // salve x; -- should error!
-        let print_stmt = Stmt::Print {
-            expression: Expr::Variable {
-                name: crate::token::Token {
-                    token_type: crate::token::TokenType::Identifier,
-                    lexeme: "x".to_string(),
-                    literal: None,
-                    span: 0..1,
-                },
-            },
-        };
+        let print_stmt = Stmt::print(Expr::Variable {
+            name: make_token(crate::token::TokenType::Identifier, "x", 0),
+        });
         let result = interpreter.execute(&print_stmt, &mut output);
 
         assert!(matches!(result, Err(ManoError::Runtime { .. })));
@@ -995,44 +952,25 @@ mod tests {
         let mut output = Vec::new();
 
         // seLiga x;
-        let var_stmt = Stmt::Var {
-            name: crate::token::Token {
-                token_type: crate::token::TokenType::Identifier,
-                lexeme: "x".to_string(),
-                literal: None,
-                span: 0..1,
-            },
-            initializer: None,
-        };
+        let var_stmt = Stmt::var(
+            make_token(crate::token::TokenType::Identifier, "x", 0),
+            None,
+        );
         interpreter.execute(&var_stmt, &mut output).unwrap();
 
         // x = 42;
-        let assign_stmt = Stmt::Expression {
-            expression: Expr::Assign {
-                name: crate::token::Token {
-                    token_type: crate::token::TokenType::Identifier,
-                    lexeme: "x".to_string(),
-                    literal: None,
-                    span: 0..1,
-                },
-                value: Box::new(Expr::Literal {
-                    value: Value::Number(42.0),
-                }),
-            },
-        };
+        let assign_stmt = Stmt::expression(Expr::Assign {
+            name: make_token(crate::token::TokenType::Identifier, "x", 0),
+            value: Box::new(Expr::Literal {
+                value: Value::Number(42.0),
+            }),
+        });
         interpreter.execute(&assign_stmt, &mut output).unwrap();
 
         // salve x;
-        let print_stmt = Stmt::Print {
-            expression: Expr::Variable {
-                name: crate::token::Token {
-                    token_type: crate::token::TokenType::Identifier,
-                    lexeme: "x".to_string(),
-                    literal: None,
-                    span: 0..1,
-                },
-            },
-        };
+        let print_stmt = Stmt::print(Expr::Variable {
+            name: make_token(crate::token::TokenType::Identifier, "x", 0),
+        });
         interpreter.execute(&print_stmt, &mut output).unwrap();
 
         assert_eq!(String::from_utf8(output).unwrap(), "42\n");
@@ -1046,20 +984,14 @@ mod tests {
         let mut output = Vec::new();
 
         // { salve 1; salve 2; }
-        let block = Stmt::Block {
-            statements: vec![
-                Stmt::Print {
-                    expression: Expr::Literal {
-                        value: Value::Number(1.0),
-                    },
-                },
-                Stmt::Print {
-                    expression: Expr::Literal {
-                        value: Value::Number(2.0),
-                    },
-                },
-            ],
-        };
+        let block = Stmt::block(vec![
+            Stmt::print(Expr::Literal {
+                value: Value::Number(1.0),
+            }),
+            Stmt::print(Expr::Literal {
+                value: Value::Number(2.0),
+            }),
+        ]);
         interpreter.execute(&block, &mut output).unwrap();
         assert_eq!(String::from_utf8(output).unwrap(), "1\n2\n");
     }
@@ -1070,14 +1002,12 @@ mod tests {
         let mut output = Vec::new();
 
         // { seLiga x = 42; }
-        let block = Stmt::Block {
-            statements: vec![Stmt::Var {
-                name: make_token(crate::token::TokenType::Identifier, "x", 1),
-                initializer: Some(Expr::Literal {
-                    value: Value::Number(42.0),
-                }),
-            }],
-        };
+        let block = Stmt::block(vec![Stmt::var(
+            make_token(crate::token::TokenType::Identifier, "x", 1),
+            Some(Expr::Literal {
+                value: Value::Number(42.0),
+            }),
+        )]);
         interpreter.execute(&block, &mut output).unwrap();
 
         // x; (should error - x not defined in outer scope)
@@ -1094,22 +1024,18 @@ mod tests {
         let mut output = Vec::new();
 
         // seLiga x = 42;
-        let var_stmt = Stmt::Var {
-            name: make_token(crate::token::TokenType::Identifier, "x", 1),
-            initializer: Some(Expr::Literal {
+        let var_stmt = Stmt::var(
+            make_token(crate::token::TokenType::Identifier, "x", 1),
+            Some(Expr::Literal {
                 value: Value::Number(42.0),
             }),
-        };
+        );
         interpreter.execute(&var_stmt, &mut output).unwrap();
 
         // { salve x; }
-        let block = Stmt::Block {
-            statements: vec![Stmt::Print {
-                expression: Expr::Variable {
-                    name: make_token(crate::token::TokenType::Identifier, "x", 2),
-                },
-            }],
-        };
+        let block = Stmt::block(vec![Stmt::print(Expr::Variable {
+            name: make_token(crate::token::TokenType::Identifier, "x", 2),
+        })]);
         interpreter.execute(&block, &mut output).unwrap();
         assert_eq!(String::from_utf8(output).unwrap(), "42\n");
     }
@@ -1120,38 +1046,32 @@ mod tests {
         let mut output = Vec::new();
 
         // seLiga x = 1;
-        let var_stmt = Stmt::Var {
-            name: make_token(crate::token::TokenType::Identifier, "x", 1),
-            initializer: Some(Expr::Literal {
+        let var_stmt = Stmt::var(
+            make_token(crate::token::TokenType::Identifier, "x", 1),
+            Some(Expr::Literal {
                 value: Value::Number(1.0),
             }),
-        };
+        );
         interpreter.execute(&var_stmt, &mut output).unwrap();
 
         // { seLiga x = 99; salve x; }
-        let block = Stmt::Block {
-            statements: vec![
-                Stmt::Var {
-                    name: make_token(crate::token::TokenType::Identifier, "x", 2),
-                    initializer: Some(Expr::Literal {
-                        value: Value::Number(99.0),
-                    }),
-                },
-                Stmt::Print {
-                    expression: Expr::Variable {
-                        name: make_token(crate::token::TokenType::Identifier, "x", 3),
-                    },
-                },
-            ],
-        };
+        let block = Stmt::block(vec![
+            Stmt::var(
+                make_token(crate::token::TokenType::Identifier, "x", 2),
+                Some(Expr::Literal {
+                    value: Value::Number(99.0),
+                }),
+            ),
+            Stmt::print(Expr::Variable {
+                name: make_token(crate::token::TokenType::Identifier, "x", 3),
+            }),
+        ]);
         interpreter.execute(&block, &mut output).unwrap();
 
         // salve x; (should be 1 again)
-        let print_stmt = Stmt::Print {
-            expression: Expr::Variable {
-                name: make_token(crate::token::TokenType::Identifier, "x", 4),
-            },
-        };
+        let print_stmt = Stmt::print(Expr::Variable {
+            name: make_token(crate::token::TokenType::Identifier, "x", 4),
+        });
         interpreter.execute(&print_stmt, &mut output).unwrap();
 
         assert_eq!(String::from_utf8(output).unwrap(), "99\n1\n");
@@ -1163,33 +1083,27 @@ mod tests {
         let mut output = Vec::new();
 
         // seLiga x = 1;
-        let var_stmt = Stmt::Var {
-            name: make_token(crate::token::TokenType::Identifier, "x", 1),
-            initializer: Some(Expr::Literal {
+        let var_stmt = Stmt::var(
+            make_token(crate::token::TokenType::Identifier, "x", 1),
+            Some(Expr::Literal {
                 value: Value::Number(1.0),
             }),
-        };
+        );
         interpreter.execute(&var_stmt, &mut output).unwrap();
 
         // { x = 99; }
-        let block = Stmt::Block {
-            statements: vec![Stmt::Expression {
-                expression: Expr::Assign {
-                    name: make_token(crate::token::TokenType::Identifier, "x", 2),
-                    value: Box::new(Expr::Literal {
-                        value: Value::Number(99.0),
-                    }),
-                },
-            }],
-        };
+        let block = Stmt::block(vec![Stmt::expression(Expr::Assign {
+            name: make_token(crate::token::TokenType::Identifier, "x", 2),
+            value: Box::new(Expr::Literal {
+                value: Value::Number(99.0),
+            }),
+        })]);
         interpreter.execute(&block, &mut output).unwrap();
 
         // salve x; (should be 99)
-        let print_stmt = Stmt::Print {
-            expression: Expr::Variable {
-                name: make_token(crate::token::TokenType::Identifier, "x", 3),
-            },
-        };
+        let print_stmt = Stmt::print(Expr::Variable {
+            name: make_token(crate::token::TokenType::Identifier, "x", 3),
+        });
         interpreter.execute(&print_stmt, &mut output).unwrap();
 
         assert_eq!(String::from_utf8(output).unwrap(), "99\n");
@@ -1201,30 +1115,26 @@ mod tests {
         let mut output = Vec::new();
 
         // seLiga x = 1;
-        let var_stmt = Stmt::Var {
-            name: make_token(crate::token::TokenType::Identifier, "x", 1),
-            initializer: Some(Expr::Literal {
+        let var_stmt = Stmt::var(
+            make_token(crate::token::TokenType::Identifier, "x", 1),
+            Some(Expr::Literal {
                 value: Value::Number(1.0),
             }),
-        };
+        );
         interpreter.execute(&var_stmt, &mut output).unwrap();
 
         // { seLiga y = 99; undefined_var; } - should error on undefined_var
-        let block = Stmt::Block {
-            statements: vec![
-                Stmt::Var {
-                    name: make_token(crate::token::TokenType::Identifier, "y", 2),
-                    initializer: Some(Expr::Literal {
-                        value: Value::Number(99.0),
-                    }),
-                },
-                Stmt::Expression {
-                    expression: Expr::Variable {
-                        name: make_token(crate::token::TokenType::Identifier, "undefined_var", 3),
-                    },
-                },
-            ],
-        };
+        let block = Stmt::block(vec![
+            Stmt::var(
+                make_token(crate::token::TokenType::Identifier, "y", 2),
+                Some(Expr::Literal {
+                    value: Value::Number(99.0),
+                }),
+            ),
+            Stmt::expression(Expr::Variable {
+                name: make_token(crate::token::TokenType::Identifier, "undefined_var", 3),
+            }),
+        ]);
         let result = interpreter.execute(&block, &mut output);
         assert!(matches!(result, Err(ManoError::Runtime { .. })));
 
@@ -1251,17 +1161,15 @@ mod tests {
         let mut output = Vec::new();
 
         // sePá (firmeza) salve 1;
-        let stmt = Stmt::If {
-            condition: Expr::Literal {
+        let stmt = Stmt::if_stmt(
+            Expr::Literal {
                 value: Value::Bool(true),
             },
-            then_branch: Box::new(Stmt::Print {
-                expression: Expr::Literal {
-                    value: Value::Number(1.0),
-                },
+            Stmt::print(Expr::Literal {
+                value: Value::Number(1.0),
             }),
-            else_branch: None,
-        };
+            None,
+        );
         interpreter.execute(&stmt, &mut output).unwrap();
         assert_eq!(String::from_utf8(output).unwrap(), "1\n");
     }
@@ -1272,17 +1180,15 @@ mod tests {
         let mut output = Vec::new();
 
         // sePá (treta) salve 1;
-        let stmt = Stmt::If {
-            condition: Expr::Literal {
+        let stmt = Stmt::if_stmt(
+            Expr::Literal {
                 value: Value::Bool(false),
             },
-            then_branch: Box::new(Stmt::Print {
-                expression: Expr::Literal {
-                    value: Value::Number(1.0),
-                },
+            Stmt::print(Expr::Literal {
+                value: Value::Number(1.0),
             }),
-            else_branch: None,
-        };
+            None,
+        );
         interpreter.execute(&stmt, &mut output).unwrap();
         assert!(output.is_empty());
     }
@@ -1293,21 +1199,17 @@ mod tests {
         let mut output = Vec::new();
 
         // sePá (firmeza) salve 1; vacilou salve 2;
-        let stmt = Stmt::If {
-            condition: Expr::Literal {
+        let stmt = Stmt::if_stmt(
+            Expr::Literal {
                 value: Value::Bool(true),
             },
-            then_branch: Box::new(Stmt::Print {
-                expression: Expr::Literal {
-                    value: Value::Number(1.0),
-                },
+            Stmt::print(Expr::Literal {
+                value: Value::Number(1.0),
             }),
-            else_branch: Some(Box::new(Stmt::Print {
-                expression: Expr::Literal {
-                    value: Value::Number(2.0),
-                },
+            Some(Stmt::print(Expr::Literal {
+                value: Value::Number(2.0),
             })),
-        };
+        );
         interpreter.execute(&stmt, &mut output).unwrap();
         assert_eq!(String::from_utf8(output).unwrap(), "1\n");
     }
@@ -1318,21 +1220,17 @@ mod tests {
         let mut output = Vec::new();
 
         // sePá (treta) salve 1; vacilou salve 2;
-        let stmt = Stmt::If {
-            condition: Expr::Literal {
+        let stmt = Stmt::if_stmt(
+            Expr::Literal {
                 value: Value::Bool(false),
             },
-            then_branch: Box::new(Stmt::Print {
-                expression: Expr::Literal {
-                    value: Value::Number(1.0),
-                },
+            Stmt::print(Expr::Literal {
+                value: Value::Number(1.0),
             }),
-            else_branch: Some(Box::new(Stmt::Print {
-                expression: Expr::Literal {
-                    value: Value::Number(2.0),
-                },
+            Some(Stmt::print(Expr::Literal {
+                value: Value::Number(2.0),
             })),
-        };
+        );
         interpreter.execute(&stmt, &mut output).unwrap();
         assert_eq!(String::from_utf8(output).unwrap(), "2\n");
     }
@@ -1343,19 +1241,15 @@ mod tests {
         let mut output = Vec::new();
 
         // sePá (nadaNão) salve 1; vacilou salve 2;
-        let stmt = Stmt::If {
-            condition: Expr::Literal { value: Value::Nil },
-            then_branch: Box::new(Stmt::Print {
-                expression: Expr::Literal {
-                    value: Value::Number(1.0),
-                },
+        let stmt = Stmt::if_stmt(
+            Expr::Literal { value: Value::Nil },
+            Stmt::print(Expr::Literal {
+                value: Value::Number(1.0),
             }),
-            else_branch: Some(Box::new(Stmt::Print {
-                expression: Expr::Literal {
-                    value: Value::Number(2.0),
-                },
+            Some(Stmt::print(Expr::Literal {
+                value: Value::Number(2.0),
             })),
-        };
+        );
         interpreter.execute(&stmt, &mut output).unwrap();
         assert_eq!(String::from_utf8(output).unwrap(), "2\n");
     }
@@ -1436,17 +1330,17 @@ mod tests {
         let mut output = Vec::new();
 
         // seLiga x = 0;
-        let var_stmt = Stmt::Var {
-            name: make_token(crate::token::TokenType::Identifier, "x", 0),
-            initializer: Some(Expr::Literal {
+        let var_stmt = Stmt::var(
+            make_token(crate::token::TokenType::Identifier, "x", 0),
+            Some(Expr::Literal {
                 value: Value::Number(0.0),
             }),
-        };
+        );
         interpreter.execute(&var_stmt, &mut output).unwrap();
 
         // segueOFluxo (x < 3) { salve x; x = x + 1; }
-        let while_stmt = Stmt::While {
-            condition: Expr::Binary {
+        let while_stmt = Stmt::while_stmt(
+            Expr::Binary {
                 left: Box::new(Expr::Variable {
                     name: make_token(crate::token::TokenType::Identifier, "x", 0),
                 }),
@@ -1455,30 +1349,24 @@ mod tests {
                     value: Value::Number(3.0),
                 }),
             },
-            body: Box::new(Stmt::Block {
-                statements: vec![
-                    Stmt::Print {
-                        expression: Expr::Variable {
+            Stmt::block(vec![
+                Stmt::print(Expr::Variable {
+                    name: make_token(crate::token::TokenType::Identifier, "x", 0),
+                }),
+                Stmt::expression(Expr::Assign {
+                    name: make_token(crate::token::TokenType::Identifier, "x", 0),
+                    value: Box::new(Expr::Binary {
+                        left: Box::new(Expr::Variable {
                             name: make_token(crate::token::TokenType::Identifier, "x", 0),
-                        },
-                    },
-                    Stmt::Expression {
-                        expression: Expr::Assign {
-                            name: make_token(crate::token::TokenType::Identifier, "x", 0),
-                            value: Box::new(Expr::Binary {
-                                left: Box::new(Expr::Variable {
-                                    name: make_token(crate::token::TokenType::Identifier, "x", 0),
-                                }),
-                                operator: make_token(crate::token::TokenType::Plus, "+", 0),
-                                right: Box::new(Expr::Literal {
-                                    value: Value::Number(1.0),
-                                }),
-                            }),
-                        },
-                    },
-                ],
-            }),
-        };
+                        }),
+                        operator: make_token(crate::token::TokenType::Plus, "+", 0),
+                        right: Box::new(Expr::Literal {
+                            value: Value::Number(1.0),
+                        }),
+                    }),
+                }),
+            ]),
+        );
         interpreter.execute(&while_stmt, &mut output).unwrap();
         assert_eq!(String::from_utf8(output).unwrap(), "0\n1\n2\n");
     }
@@ -1489,16 +1377,14 @@ mod tests {
         let mut output = Vec::new();
 
         // segueOFluxo (treta) salve 1;
-        let stmt = Stmt::While {
-            condition: Expr::Literal {
+        let stmt = Stmt::while_stmt(
+            Expr::Literal {
                 value: Value::Bool(false),
             },
-            body: Box::new(Stmt::Print {
-                expression: Expr::Literal {
-                    value: Value::Number(1.0),
-                },
+            Stmt::print(Expr::Literal {
+                value: Value::Number(1.0),
             }),
-        };
+        );
         interpreter.execute(&stmt, &mut output).unwrap();
         assert!(output.is_empty());
     }
@@ -1511,56 +1397,50 @@ mod tests {
         let mut output = Vec::new();
 
         // seLiga i = 0;
-        let var_stmt = Stmt::Var {
-            name: make_token(crate::token::TokenType::Identifier, "i", 0),
-            initializer: Some(Expr::Literal {
+        let var_stmt = Stmt::var(
+            make_token(crate::token::TokenType::Identifier, "i", 0),
+            Some(Expr::Literal {
                 value: Value::Number(0.0),
             }),
-        };
+        );
         interpreter.execute(&var_stmt, &mut output).unwrap();
 
         // segueOFluxo (firmeza) { salve i; sePá (i == 2) saiFora; i = i + 1; }
-        let while_stmt = Stmt::While {
-            condition: Expr::Literal {
+        let while_stmt = Stmt::while_stmt(
+            Expr::Literal {
                 value: Value::Bool(true),
             },
-            body: Box::new(Stmt::Block {
-                statements: vec![
-                    Stmt::Print {
-                        expression: Expr::Variable {
+            Stmt::block(vec![
+                Stmt::print(Expr::Variable {
+                    name: make_token(crate::token::TokenType::Identifier, "i", 0),
+                }),
+                Stmt::if_stmt(
+                    Expr::Binary {
+                        left: Box::new(Expr::Variable {
                             name: make_token(crate::token::TokenType::Identifier, "i", 0),
-                        },
+                        }),
+                        operator: make_token(crate::token::TokenType::EqualEqual, "==", 0),
+                        right: Box::new(Expr::Literal {
+                            value: Value::Number(2.0),
+                        }),
                     },
-                    Stmt::If {
-                        condition: Expr::Binary {
-                            left: Box::new(Expr::Variable {
-                                name: make_token(crate::token::TokenType::Identifier, "i", 0),
-                            }),
-                            operator: make_token(crate::token::TokenType::EqualEqual, "==", 0),
-                            right: Box::new(Expr::Literal {
-                                value: Value::Number(2.0),
-                            }),
-                        },
-                        then_branch: Box::new(Stmt::Break),
-                        else_branch: None,
-                    },
-                    Stmt::Expression {
-                        expression: Expr::Assign {
+                    Stmt::break_stmt(),
+                    None,
+                ),
+                Stmt::expression(Expr::Assign {
+                    name: make_token(crate::token::TokenType::Identifier, "i", 0),
+                    value: Box::new(Expr::Binary {
+                        left: Box::new(Expr::Variable {
                             name: make_token(crate::token::TokenType::Identifier, "i", 0),
-                            value: Box::new(Expr::Binary {
-                                left: Box::new(Expr::Variable {
-                                    name: make_token(crate::token::TokenType::Identifier, "i", 0),
-                                }),
-                                operator: make_token(crate::token::TokenType::Plus, "+", 0),
-                                right: Box::new(Expr::Literal {
-                                    value: Value::Number(1.0),
-                                }),
-                            }),
-                        },
-                    },
-                ],
-            }),
-        };
+                        }),
+                        operator: make_token(crate::token::TokenType::Plus, "+", 0),
+                        right: Box::new(Expr::Literal {
+                            value: Value::Number(1.0),
+                        }),
+                    }),
+                }),
+            ]),
+        );
         interpreter.execute(&while_stmt, &mut output).unwrap();
         assert_eq!(String::from_utf8(output).unwrap(), "0\n1\n2\n");
     }
@@ -1571,26 +1451,20 @@ mod tests {
         let mut output = Vec::new();
 
         // segueOFluxo (firmeza) { salve 1; saiFora; salve 2; }
-        let stmt = Stmt::While {
-            condition: Expr::Literal {
+        let stmt = Stmt::while_stmt(
+            Expr::Literal {
                 value: Value::Bool(true),
             },
-            body: Box::new(Stmt::Block {
-                statements: vec![
-                    Stmt::Print {
-                        expression: Expr::Literal {
-                            value: Value::Number(1.0),
-                        },
-                    },
-                    Stmt::Break,
-                    Stmt::Print {
-                        expression: Expr::Literal {
-                            value: Value::Number(2.0),
-                        },
-                    },
-                ],
-            }),
-        };
+            Stmt::block(vec![
+                Stmt::print(Expr::Literal {
+                    value: Value::Number(1.0),
+                }),
+                Stmt::break_stmt(),
+                Stmt::print(Expr::Literal {
+                    value: Value::Number(2.0),
+                }),
+            ]),
+        );
         interpreter.execute(&stmt, &mut output).unwrap();
         assert_eq!(String::from_utf8(output).unwrap(), "1\n");
     }
@@ -1601,20 +1475,35 @@ mod tests {
         let mut output = Vec::new();
 
         // segueOFluxo (firmeza) { salve -"oops"; }
-        let stmt = Stmt::While {
-            condition: Expr::Literal {
+        let stmt = Stmt::while_stmt(
+            Expr::Literal {
                 value: Value::Bool(true),
             },
-            body: Box::new(Stmt::Print {
-                expression: Expr::Unary {
-                    operator: make_token(crate::token::TokenType::Minus, "-", 0),
-                    right: Box::new(Expr::Literal {
-                        value: Value::String("oops".to_string()),
-                    }),
-                },
+            Stmt::print(Expr::Unary {
+                operator: make_token(crate::token::TokenType::Minus, "-", 0),
+                right: Box::new(Expr::Literal {
+                    value: Value::String("oops".to_string()),
+                }),
             }),
-        };
+        );
         let result = interpreter.execute(&stmt, &mut output);
         assert!(matches!(result, Err(ManoError::Runtime { .. })));
+    }
+
+    // === else statements ===
+
+    #[test]
+    fn executes_else_body() {
+        let mut interpreter = Interpreter::new();
+        let mut output = Vec::new();
+
+        let stmt = Stmt::Else {
+            body: Box::new(Stmt::print(Expr::Literal {
+                value: Value::Number(42.0),
+            })),
+            span: 0..10,
+        };
+        interpreter.execute(&stmt, &mut output).unwrap();
+        assert_eq!(String::from_utf8(output).unwrap(), "42\n");
     }
 }

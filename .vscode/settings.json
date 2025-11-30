@@ -1,0 +1,3 @@
+{
+  "mano.server.path": "./target/release/mano-lsp"
+}

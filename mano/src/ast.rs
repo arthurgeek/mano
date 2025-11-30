@@ -38,31 +38,142 @@ pub enum Expr {
     },
 }
 
+pub type Span = std::ops::Range<usize>;
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum Stmt {
     Expression {
         expression: Expr,
+        span: Span,
     },
     Print {
         expression: Expr,
+        span: Span,
     },
     Var {
         name: Token,
         initializer: Option<Expr>,
+        span: Span,
     },
     Block {
         statements: Vec<Stmt>,
+        span: Span,
     },
     If {
         condition: Expr,
         then_branch: Box<Stmt>,
         else_branch: Option<Box<Stmt>>,
+        span: Span,
     },
     While {
         condition: Expr,
         body: Box<Stmt>,
+        span: Span,
     },
-    Break,
+    Break {
+        span: Span,
+    },
+    Else {
+        body: Box<Stmt>,
+        span: Span,
+    },
+}
+
+impl Stmt {
+    pub fn children(&self) -> Vec<&Stmt> {
+        match self {
+            Stmt::Block { statements, .. } => statements.iter().collect(),
+            Stmt::If {
+                then_branch,
+                else_branch,
+                ..
+            } => {
+                let mut children = vec![then_branch.as_ref()];
+                if let Some(eb) = else_branch {
+                    children.push(eb.as_ref());
+                }
+                children
+            }
+            Stmt::While { body, .. } | Stmt::Else { body, .. } => vec![body.as_ref()],
+            _ => vec![],
+        }
+    }
+
+    pub fn var_declaration(&self) -> Option<(&Token, &Option<Expr>)> {
+        match self {
+            Stmt::Var {
+                name, initializer, ..
+            } => Some((name, initializer)),
+            _ => None,
+        }
+    }
+
+    pub fn span(&self) -> Span {
+        match self {
+            Stmt::Expression { span, .. }
+            | Stmt::Print { span, .. }
+            | Stmt::Var { span, .. }
+            | Stmt::Block { span, .. }
+            | Stmt::If { span, .. }
+            | Stmt::While { span, .. }
+            | Stmt::Break { span, .. }
+            | Stmt::Else { span, .. } => span.clone(),
+        }
+    }
+}
+
+/// Helper constructors for tests that don't need real spans
+#[cfg(test)]
+impl Stmt {
+    pub fn print(expression: Expr) -> Self {
+        Stmt::Print {
+            expression,
+            span: 0..0,
+        }
+    }
+
+    pub fn expression(expression: Expr) -> Self {
+        Stmt::Expression {
+            expression,
+            span: 0..0,
+        }
+    }
+
+    pub fn var(name: Token, initializer: Option<Expr>) -> Self {
+        Stmt::Var {
+            name,
+            initializer,
+            span: 0..0,
+        }
+    }
+
+    pub fn block(statements: Vec<Stmt>) -> Self {
+        Stmt::Block {
+            statements,
+            span: 0..0,
+        }
+    }
+
+    pub fn if_stmt(condition: Expr, then_branch: Stmt, else_branch: Option<Stmt>) -> Self {
+        Stmt::If {
+            condition,
+            then_branch: Box::new(then_branch),
+            else_branch: else_branch.map(Box::new),
+            span: 0..0,
+        }
+    }
+
+    pub fn while_stmt(condition: Expr, body: Stmt) -> Self {
+        Stmt::While {
+            condition,
+            body: Box::new(body),
+            span: 0..0,
+        }
+    }
+
+    pub fn break_stmt() -> Self {
+        Stmt::Break { span: 0..0 }
+    }
 }
 
 impl fmt::Display for Expr {
@@ -246,20 +357,16 @@ mod tests {
 
     #[test]
     fn creates_block_statement() {
-        let stmt = Stmt::Block {
-            statements: vec![Stmt::Print {
-                expression: Expr::Literal {
-                    value: Value::Number(42.0),
-                },
-            }],
-        };
-        assert!(matches!(stmt, Stmt::Block { statements } if statements.len() == 1));
+        let stmt = Stmt::block(vec![Stmt::print(Expr::Literal {
+            value: Value::Number(42.0),
+        })]);
+        assert!(matches!(stmt, Stmt::Block { statements, .. } if statements.len() == 1));
     }
 
     #[test]
     fn creates_empty_block_statement() {
-        let stmt = Stmt::Block { statements: vec![] };
-        assert!(matches!(stmt, Stmt::Block { statements } if statements.is_empty()));
+        let stmt = Stmt::block(vec![]);
+        assert!(matches!(stmt, Stmt::Block { statements, .. } if statements.is_empty()));
     }
 
     #[test]
@@ -313,5 +420,233 @@ mod tests {
         };
 
         assert_eq!(expr.to_string(), "(?: firmeza 1 2)");
+    }
+
+    #[test]
+    fn stmt_span_returns_span_for_each_variant() {
+        let span = 10..20;
+
+        let expr = Stmt::Expression {
+            expression: Expr::Literal {
+                value: Value::Number(1.0),
+            },
+            span: span.clone(),
+        };
+        assert_eq!(expr.span(), span);
+
+        let print = Stmt::Print {
+            expression: Expr::Literal {
+                value: Value::Number(1.0),
+            },
+            span: span.clone(),
+        };
+        assert_eq!(print.span(), span);
+
+        let var = Stmt::Var {
+            name: Token {
+                token_type: TokenType::Identifier,
+                lexeme: "x".to_string(),
+                literal: None,
+                span: 0..1,
+            },
+            initializer: None,
+            span: 30..40,
+        };
+        assert_eq!(var.span(), 30..40);
+
+        let block = Stmt::Block {
+            statements: vec![],
+            span: 5..15,
+        };
+        assert_eq!(block.span(), 5..15);
+
+        let if_stmt = Stmt::If {
+            condition: Expr::Literal {
+                value: Value::Bool(true),
+            },
+            then_branch: Box::new(Stmt::break_stmt()),
+            else_branch: None,
+            span: 50..60,
+        };
+        assert_eq!(if_stmt.span(), 50..60);
+
+        let while_stmt = Stmt::While {
+            condition: Expr::Literal {
+                value: Value::Bool(true),
+            },
+            body: Box::new(Stmt::break_stmt()),
+            span: 70..80,
+        };
+        assert_eq!(while_stmt.span(), 70..80);
+
+        let break_stmt = Stmt::Break { span: 90..95 };
+        assert_eq!(break_stmt.span(), 90..95);
+
+        let else_stmt = Stmt::Else {
+            body: Box::new(Stmt::print(Expr::Literal { value: Value::Nil })),
+            span: 100..200,
+        };
+        assert_eq!(else_stmt.span(), 100..200);
+    }
+
+    #[test]
+    fn stmt_children_returns_empty_for_simple_statements() {
+        let print = Stmt::print(Expr::Literal { value: Value::Nil });
+        assert!(print.children().is_empty());
+
+        let break_stmt = Stmt::break_stmt();
+        assert!(break_stmt.children().is_empty());
+    }
+
+    #[test]
+    fn stmt_children_returns_statements_for_block() {
+        let inner1 = Stmt::Print {
+            expression: Expr::Literal {
+                value: Value::Number(1.0),
+            },
+            span: 10..20,
+        };
+        let inner2 = Stmt::Print {
+            expression: Expr::Literal {
+                value: Value::Number(2.0),
+            },
+            span: 30..40,
+        };
+        let block = Stmt::block(vec![inner1, inner2]);
+
+        let children = block.children();
+        assert_eq!(children.len(), 2);
+        assert_eq!(children[0].span(), 10..20);
+        assert_eq!(children[1].span(), 30..40);
+    }
+
+    #[test]
+    fn stmt_children_returns_branches_for_if_else() {
+        let then_stmt = Stmt::Print {
+            expression: Expr::Literal {
+                value: Value::Number(1.0),
+            },
+            span: 100..110,
+        };
+        let else_stmt = Stmt::Print {
+            expression: Expr::Literal {
+                value: Value::Number(2.0),
+            },
+            span: 200..210,
+        };
+        let if_stmt = Stmt::if_stmt(
+            Expr::Literal {
+                value: Value::Bool(true),
+            },
+            then_stmt,
+            Some(else_stmt),
+        );
+
+        let children = if_stmt.children();
+        assert_eq!(children.len(), 2);
+        assert_eq!(children[0].span(), 100..110);
+        assert_eq!(children[1].span(), 200..210);
+    }
+
+    #[test]
+    fn stmt_children_returns_body_for_while() {
+        let body = Stmt::Print {
+            expression: Expr::Literal {
+                value: Value::Number(42.0),
+            },
+            span: 50..60,
+        };
+        let while_stmt = Stmt::while_stmt(
+            Expr::Literal {
+                value: Value::Bool(true),
+            },
+            body,
+        );
+
+        let children = while_stmt.children();
+        assert_eq!(children.len(), 1);
+        assert_eq!(children[0].span(), 50..60);
+    }
+
+    #[test]
+    fn stmt_var_declaration_returns_name_and_initializer() {
+        let name = Token {
+            token_type: TokenType::Identifier,
+            lexeme: "meuMano".to_string(),
+            literal: None,
+            span: 7..14,
+        };
+        let init = Expr::Literal {
+            value: Value::Number(42.0),
+        };
+        let var = Stmt::Var {
+            name: name.clone(),
+            initializer: Some(init),
+            span: 0..18,
+        };
+
+        let (n, i) = var.var_declaration().expect("should return Some for Var");
+        assert_eq!(n.lexeme, "meuMano");
+        assert_eq!(n.span, 7..14);
+        assert!(matches!(
+            i,
+            Some(Expr::Literal { value: Value::Number(n) }) if *n == 42.0
+        ));
+    }
+
+    #[test]
+    fn stmt_var_declaration_returns_none_for_expression() {
+        let stmt = Stmt::expression(Expr::Literal { value: Value::Nil });
+        assert!(stmt.var_declaration().is_none());
+    }
+
+    #[test]
+    fn stmt_var_declaration_returns_none_for_print() {
+        let stmt = Stmt::print(Expr::Literal { value: Value::Nil });
+        assert!(stmt.var_declaration().is_none());
+    }
+
+    #[test]
+    fn stmt_var_declaration_returns_none_for_block() {
+        let stmt = Stmt::block(vec![]);
+        assert!(stmt.var_declaration().is_none());
+    }
+
+    #[test]
+    fn stmt_var_declaration_returns_none_for_if() {
+        let stmt = Stmt::if_stmt(
+            Expr::Literal {
+                value: Value::Bool(true),
+            },
+            Stmt::break_stmt(),
+            None,
+        );
+        assert!(stmt.var_declaration().is_none());
+    }
+
+    #[test]
+    fn stmt_var_declaration_returns_none_for_while() {
+        let stmt = Stmt::while_stmt(
+            Expr::Literal {
+                value: Value::Bool(true),
+            },
+            Stmt::break_stmt(),
+        );
+        assert!(stmt.var_declaration().is_none());
+    }
+
+    #[test]
+    fn stmt_var_declaration_returns_none_for_break() {
+        let stmt = Stmt::break_stmt();
+        assert!(stmt.var_declaration().is_none());
+    }
+
+    #[test]
+    fn stmt_var_declaration_returns_none_for_else() {
+        let stmt = Stmt::Else {
+            body: Box::new(Stmt::break_stmt()),
+            span: 0..10,
+        };
+        assert!(stmt.var_declaration().is_none());
     }
 }
