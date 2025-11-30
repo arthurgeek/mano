@@ -4,6 +4,8 @@ A tree-walking interpreter implemented in Rust, following the [Crafting Interpre
 
 **This project exists to learn about interpreters, language design, LSPs, and Rust.** It's not meant for production use — it's meant for learning and having fun along the way.
 
+Built with [Claude Code](https://claude.ai/code) — I designed and directed while Claude helped implement. Part of the learning was exploring AI-assisted development.
+
 ## Features
 
 - Full lexer, parser, and tree-walking interpreter
@@ -14,6 +16,9 @@ A tree-walking interpreter implemented in Rust, following the [Crafting Interpre
 - Beautiful error messages using [ariadne](https://github.com/zesterer/ariadne)
 - Unicode identifiers (including emoji! `seLiga 🔥 = 100`)
 - [Turing complete](examples/minsky.mano) (proven via Minsky machine simulation)
+
+![Syntax highlighting in VS Code showing a prime number checker with control flow, loops, and the modulo operator](assets/vscode-syntax.png)
+*Prime number checker showcasing keywords, control flow, and the `%` operator*
 
 ## Example
 
@@ -27,7 +32,7 @@ sePá (firmeza) {
     salve "Deu treta...";
 }
 
-// FizzBuzz porque agora temos módulo!
+// FizzBuzz clássico!
 seVira (seLiga n = 1; n <= 15; n = n + 1) {
     sePá (n % 15 == 0) salve "FizzBuzz";
     vacilou sePá (n % 3 == 0) salve "Fizz";
@@ -36,8 +41,18 @@ seVira (seLiga n = 1; n <= 15; n = n + 1) {
 }
 
 // Emoji variables porque sim
+seLiga 🔥 = "crush";
 oiSumida 🔥;
 ```
+
+![REPL running FizzBuzz with syntax highlighting, showing colorized keywords and output](assets/repl-syntax.png)
+*REPL with syntax highlighting, multi-line editing, and FizzBuzz output*
+
+![Runtime errors displayed with ariadne, showing colorful diagnostics with mano-style messages](assets/errors.png)
+*Errors roast you in mano style with precise source locations*
+
+![Unicode and emoji variable names in VS Code, showing Russian text and fire emoji as identifiers](assets/unicode.png)
+*Full Unicode support: emoji and international characters as variable names*
 
 ## Keywords
 
@@ -72,11 +87,11 @@ cargo run -p mano-cli
 cargo run -p mano-cli -- script.mano
 ```
 
-## Editor Support
+## LSP Support
 
 The `mano-lsp` crate implements the [Language Server Protocol](https://microsoft.github.io/language-server-protocol/), providing editor-agnostic tooling. This was built to learn how LSPs work!
 
-**LSP Features:**
+**Features:**
 - Real-time diagnostics (scan and parse errors)
 - Auto-completion (keywords and variables)
 - Go to definition / Find references
@@ -93,11 +108,40 @@ The `mano-lsp` crate implements the [Language Server Protocol](https://microsoft
 - Unicode/emoji word selection
 - LSP client integration
 
+![LSP real-time diagnostics in VS Code showing scanner errors with inline messages](assets/lsp-diagnostics.png)
+*Real-time diagnostics catch errors as you type*
+
+![LSP find references showing all usages of a variable across the file](assets/lsp-references.png)
+*Find all references to any variable*
+
+![LSP go to definition showing the declaration of a variable](assets/lsp-definitions.png)
+*Jump to definition with a single click*
+
+![LSP document symbols showing all variables in the current file](assets/lsp-symbols.png)
+*Document symbols for quick navigation*
+
 ```bash
 # Build LSP and install extension
 cargo build --release -p mano-lsp
 ln -s $(pwd)/editors/vscode ~/.vscode/extensions/mano.mano-lang-0.1.0
 ```
+
+## Differences from Lox
+
+mano implements several [Crafting Interpreters challenges](https://craftinginterpreters.com/contents.html) and extensions:
+
+| Feature | Description |
+|---------|-------------|
+| `%` modulo | Arithmetic remainder operator |
+| `? :` ternary | Conditional expressions |
+| `,` comma | Expression sequencing (returns rightmost) |
+| `/* */` nested | Block comments can nest |
+| `saiFora` break | Exit loops early |
+| Unicode identifiers | Including emoji: `seLiga 🔥 = 42` |
+| `oiSumida` alias | Second print keyword for variety |
+| Source spans | All tokens/AST nodes track position for errors and LSP |
+| Rich errors | Beautiful diagnostics with [ariadne](https://github.com/zesterer/ariadne) |
+| REPL | Syntax highlighting, auto-complete, multi-line editing, history |
 
 ## Development
 
