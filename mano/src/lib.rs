@@ -5,6 +5,7 @@ mod interpreter;
 mod parser;
 mod scanner;
 mod token;
+mod value;
 
 use std::io::Write;
 
@@ -12,7 +13,10 @@ pub use ast::Stmt;
 pub use error::ManoError;
 pub use parser::Parser;
 pub use scanner::{KEYWORDS, Scanner, is_identifier_char, is_identifier_start};
-pub use token::{Token, TokenType, Value};
+pub use token::{Literal, Token, TokenType};
+
+/// Native functions available in the interpreter
+pub const NATIVE_FUNCTIONS: &[&str] = &["fazTeuCorre"];
 
 pub struct Mano {
     interpreter: interpreter::Interpreter,

@@ -1,6 +1,6 @@
 use std::fmt;
 
-use crate::token::{Token, Value};
+use crate::token::{Literal, Token};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Expr {
@@ -19,7 +19,7 @@ pub enum Expr {
         right: Box<Expr>,
     },
     Literal {
-        value: Value,
+        value: Literal,
     },
     Grouping {
         expression: Box<Expr>,
@@ -35,6 +35,15 @@ pub enum Expr {
         left: Box<Expr>,
         operator: Token,
         right: Box<Expr>,
+    },
+    Call {
+        callee: Box<Expr>,
+        paren: Token,
+        arguments: Vec<Expr>,
+    },
+    Lambda {
+        params: Vec<Token>,
+        body: Vec<Stmt>,
     },
 }
 
@@ -77,6 +86,17 @@ pub enum Stmt {
         body: Box<Stmt>,
         span: Span,
     },
+    Function {
+        name: Token,
+        params: Vec<Token>,
+        body: Vec<Stmt>,
+        span: Span,
+    },
+    Return {
+        keyword: Token,
+        value: Option<Expr>,
+        span: Span,
+    },
 }
 
 impl Stmt {
@@ -108,6 +128,15 @@ impl Stmt {
         }
     }
 
+    pub fn function_declaration(&self) -> Option<(&Token, &Vec<Token>, &Vec<Stmt>)> {
+        match self {
+            Stmt::Function {
+                name, params, body, ..
+            } => Some((name, params, body)),
+            _ => None,
+        }
+    }
+
     pub fn span(&self) -> Span {
         match self {
             Stmt::Expression { span, .. }
@@ -117,7 +146,9 @@ impl Stmt {
             | Stmt::If { span, .. }
             | Stmt::While { span, .. }
             | Stmt::Break { span, .. }
-            | Stmt::Else { span, .. } => span.clone(),
+            | Stmt::Else { span, .. }
+            | Stmt::Function { span, .. }
+            | Stmt::Return { span, .. } => span.clone(),
         }
     }
 }
@@ -199,6 +230,22 @@ impl fmt::Display for Expr {
                 operator,
                 right,
             } => write!(f, "({} {} {})", operator.lexeme, left, right),
+            Expr::Call {
+                callee, arguments, ..
+            } => {
+                write!(f, "(call {}", callee)?;
+                for arg in arguments {
+                    write!(f, " {}", arg)?;
+                }
+                write!(f, ")")
+            }
+            Expr::Lambda { params, .. } => {
+                write!(f, "(lambda")?;
+                for param in params {
+                    write!(f, " {}", param.lexeme)?;
+                }
+                write!(f, ")")
+            }
         }
     }
 }
@@ -220,12 +267,12 @@ mod tests {
     #[test]
     fn creates_literal_number() {
         let expr = Expr::Literal {
-            value: Value::Number(42.0),
+            value: Literal::Number(42.0),
         };
         assert!(matches!(
             expr,
             Expr::Literal {
-                value: Value::Number(n)
+                value: Literal::Number(n)
             } if n == 42.0
         ));
     }
@@ -233,12 +280,12 @@ mod tests {
     #[test]
     fn creates_literal_string() {
         let expr = Expr::Literal {
-            value: Value::String("mano".to_string()),
+            value: Literal::String("mano".to_string()),
         };
         assert!(matches!(
             expr,
             Expr::Literal {
-                value: Value::String(ref s)
+                value: Literal::String(ref s)
             } if s == "mano"
         ));
     }
@@ -246,20 +293,27 @@ mod tests {
     #[test]
     fn creates_literal_bool() {
         let expr = Expr::Literal {
-            value: Value::Bool(true),
+            value: Literal::Bool(true),
         };
         assert!(matches!(
             expr,
             Expr::Literal {
-                value: Value::Bool(true)
+                value: Literal::Bool(true)
             }
         ));
     }
 
     #[test]
     fn creates_literal_nil() {
-        let expr = Expr::Literal { value: Value::Nil };
-        assert!(matches!(expr, Expr::Literal { value: Value::Nil }));
+        let expr = Expr::Literal {
+            value: Literal::Nil,
+        };
+        assert!(matches!(
+            expr,
+            Expr::Literal {
+                value: Literal::Nil
+            }
+        ));
     }
 
     #[test]
@@ -267,7 +321,7 @@ mod tests {
         let expr = Expr::Unary {
             operator: make_token(TokenType::Minus, "-"),
             right: Box::new(Expr::Literal {
-                value: Value::Number(5.0),
+                value: Literal::Number(5.0),
             }),
         };
         assert!(matches!(expr, Expr::Unary { .. }));
@@ -277,11 +331,11 @@ mod tests {
     fn creates_binary_expression() {
         let expr = Expr::Binary {
             left: Box::new(Expr::Literal {
-                value: Value::Number(1.0),
+                value: Literal::Number(1.0),
             }),
             operator: make_token(TokenType::Plus, "+"),
             right: Box::new(Expr::Literal {
-                value: Value::Number(2.0),
+                value: Literal::Number(2.0),
             }),
         };
         assert!(matches!(expr, Expr::Binary { .. }));
@@ -291,7 +345,7 @@ mod tests {
     fn creates_grouping_expression() {
         let expr = Expr::Grouping {
             expression: Box::new(Expr::Literal {
-                value: Value::Number(42.0),
+                value: Literal::Number(42.0),
             }),
         };
         assert!(matches!(expr, Expr::Grouping { .. }));
@@ -333,7 +387,7 @@ mod tests {
                 span: 0..1,
             },
             value: Box::new(Expr::Literal {
-                value: Value::Number(42.0),
+                value: Literal::Number(42.0),
             }),
         };
         assert!(matches!(expr, Expr::Assign { name, .. } if name.lexeme == "x"));
@@ -349,7 +403,7 @@ mod tests {
                 span: 0..1,
             },
             value: Box::new(Expr::Literal {
-                value: Value::Number(42.0),
+                value: Literal::Number(42.0),
             }),
         };
         assert_eq!(expr.to_string(), "(= x 42)");
@@ -358,7 +412,7 @@ mod tests {
     #[test]
     fn creates_block_statement() {
         let stmt = Stmt::block(vec![Stmt::print(Expr::Literal {
-            value: Value::Number(42.0),
+            value: Literal::Number(42.0),
         })]);
         assert!(matches!(stmt, Stmt::Block { statements, .. } if statements.len() == 1));
     }
@@ -377,7 +431,7 @@ mod tests {
             right: Box::new(Expr::Unary {
                 operator: make_token(TokenType::Minus, "-"),
                 right: Box::new(Expr::Literal {
-                    value: Value::Number(5.0),
+                    value: Literal::Number(5.0),
                 }),
             }),
         };
@@ -391,13 +445,13 @@ mod tests {
             left: Box::new(Expr::Unary {
                 operator: make_token(TokenType::Minus, "-"),
                 right: Box::new(Expr::Literal {
-                    value: Value::Number(123.0),
+                    value: Literal::Number(123.0),
                 }),
             }),
             operator: make_token(TokenType::Star, "*"),
             right: Box::new(Expr::Grouping {
                 expression: Box::new(Expr::Literal {
-                    value: Value::Number(45.67),
+                    value: Literal::Number(45.67),
                 }),
             }),
         };
@@ -409,13 +463,13 @@ mod tests {
     fn displays_ternary_expression() {
         let expr = Expr::Ternary {
             condition: Box::new(Expr::Literal {
-                value: Value::Bool(true),
+                value: Literal::Bool(true),
             }),
             then_branch: Box::new(Expr::Literal {
-                value: Value::Number(1.0),
+                value: Literal::Number(1.0),
             }),
             else_branch: Box::new(Expr::Literal {
-                value: Value::Number(2.0),
+                value: Literal::Number(2.0),
             }),
         };
 
@@ -428,7 +482,7 @@ mod tests {
 
         let expr = Stmt::Expression {
             expression: Expr::Literal {
-                value: Value::Number(1.0),
+                value: Literal::Number(1.0),
             },
             span: span.clone(),
         };
@@ -436,7 +490,7 @@ mod tests {
 
         let print = Stmt::Print {
             expression: Expr::Literal {
-                value: Value::Number(1.0),
+                value: Literal::Number(1.0),
             },
             span: span.clone(),
         };
@@ -462,7 +516,7 @@ mod tests {
 
         let if_stmt = Stmt::If {
             condition: Expr::Literal {
-                value: Value::Bool(true),
+                value: Literal::Bool(true),
             },
             then_branch: Box::new(Stmt::break_stmt()),
             else_branch: None,
@@ -472,7 +526,7 @@ mod tests {
 
         let while_stmt = Stmt::While {
             condition: Expr::Literal {
-                value: Value::Bool(true),
+                value: Literal::Bool(true),
             },
             body: Box::new(Stmt::break_stmt()),
             span: 70..80,
@@ -483,7 +537,9 @@ mod tests {
         assert_eq!(break_stmt.span(), 90..95);
 
         let else_stmt = Stmt::Else {
-            body: Box::new(Stmt::print(Expr::Literal { value: Value::Nil })),
+            body: Box::new(Stmt::print(Expr::Literal {
+                value: Literal::Nil,
+            })),
             span: 100..200,
         };
         assert_eq!(else_stmt.span(), 100..200);
@@ -491,7 +547,9 @@ mod tests {
 
     #[test]
     fn stmt_children_returns_empty_for_simple_statements() {
-        let print = Stmt::print(Expr::Literal { value: Value::Nil });
+        let print = Stmt::print(Expr::Literal {
+            value: Literal::Nil,
+        });
         assert!(print.children().is_empty());
 
         let break_stmt = Stmt::break_stmt();
@@ -502,13 +560,13 @@ mod tests {
     fn stmt_children_returns_statements_for_block() {
         let inner1 = Stmt::Print {
             expression: Expr::Literal {
-                value: Value::Number(1.0),
+                value: Literal::Number(1.0),
             },
             span: 10..20,
         };
         let inner2 = Stmt::Print {
             expression: Expr::Literal {
-                value: Value::Number(2.0),
+                value: Literal::Number(2.0),
             },
             span: 30..40,
         };
@@ -524,19 +582,19 @@ mod tests {
     fn stmt_children_returns_branches_for_if_else() {
         let then_stmt = Stmt::Print {
             expression: Expr::Literal {
-                value: Value::Number(1.0),
+                value: Literal::Number(1.0),
             },
             span: 100..110,
         };
         let else_stmt = Stmt::Print {
             expression: Expr::Literal {
-                value: Value::Number(2.0),
+                value: Literal::Number(2.0),
             },
             span: 200..210,
         };
         let if_stmt = Stmt::if_stmt(
             Expr::Literal {
-                value: Value::Bool(true),
+                value: Literal::Bool(true),
             },
             then_stmt,
             Some(else_stmt),
@@ -552,13 +610,13 @@ mod tests {
     fn stmt_children_returns_body_for_while() {
         let body = Stmt::Print {
             expression: Expr::Literal {
-                value: Value::Number(42.0),
+                value: Literal::Number(42.0),
             },
             span: 50..60,
         };
         let while_stmt = Stmt::while_stmt(
             Expr::Literal {
-                value: Value::Bool(true),
+                value: Literal::Bool(true),
             },
             body,
         );
@@ -577,7 +635,7 @@ mod tests {
             span: 7..14,
         };
         let init = Expr::Literal {
-            value: Value::Number(42.0),
+            value: Literal::Number(42.0),
         };
         let var = Stmt::Var {
             name: name.clone(),
@@ -590,19 +648,23 @@ mod tests {
         assert_eq!(n.span, 7..14);
         assert!(matches!(
             i,
-            Some(Expr::Literal { value: Value::Number(n) }) if *n == 42.0
+            Some(Expr::Literal { value: Literal::Number(n) }) if *n == 42.0
         ));
     }
 
     #[test]
     fn stmt_var_declaration_returns_none_for_expression() {
-        let stmt = Stmt::expression(Expr::Literal { value: Value::Nil });
+        let stmt = Stmt::expression(Expr::Literal {
+            value: Literal::Nil,
+        });
         assert!(stmt.var_declaration().is_none());
     }
 
     #[test]
     fn stmt_var_declaration_returns_none_for_print() {
-        let stmt = Stmt::print(Expr::Literal { value: Value::Nil });
+        let stmt = Stmt::print(Expr::Literal {
+            value: Literal::Nil,
+        });
         assert!(stmt.var_declaration().is_none());
     }
 
@@ -616,7 +678,7 @@ mod tests {
     fn stmt_var_declaration_returns_none_for_if() {
         let stmt = Stmt::if_stmt(
             Expr::Literal {
-                value: Value::Bool(true),
+                value: Literal::Bool(true),
             },
             Stmt::break_stmt(),
             None,
@@ -628,7 +690,7 @@ mod tests {
     fn stmt_var_declaration_returns_none_for_while() {
         let stmt = Stmt::while_stmt(
             Expr::Literal {
-                value: Value::Bool(true),
+                value: Literal::Bool(true),
             },
             Stmt::break_stmt(),
         );
@@ -648,5 +710,128 @@ mod tests {
             span: 0..10,
         };
         assert!(stmt.var_declaration().is_none());
+    }
+
+    #[test]
+    fn displays_call_with_no_arguments() {
+        let callee = Expr::Variable {
+            name: make_token(TokenType::Identifier, "fazTeuCorre"),
+        };
+        let expr = Expr::Call {
+            callee: Box::new(callee),
+            paren: make_token(TokenType::RightParen, ")"),
+            arguments: vec![],
+        };
+        assert_eq!(expr.to_string(), "(call fazTeuCorre)");
+    }
+
+    #[test]
+    fn displays_call_with_arguments() {
+        let callee = Expr::Variable {
+            name: make_token(TokenType::Identifier, "soma"),
+        };
+        let expr = Expr::Call {
+            callee: Box::new(callee),
+            paren: make_token(TokenType::RightParen, ")"),
+            arguments: vec![
+                Expr::Literal {
+                    value: Literal::Number(1.0),
+                },
+                Expr::Literal {
+                    value: Literal::Number(2.0),
+                },
+            ],
+        };
+        assert_eq!(expr.to_string(), "(call soma 1 2)");
+    }
+
+    #[test]
+    fn creates_function_statement() {
+        let stmt = Stmt::Function {
+            name: make_token(TokenType::Identifier, "cumprimentar"),
+            params: vec![make_token(TokenType::Identifier, "nome")],
+            body: vec![],
+            span: 0..30,
+        };
+        assert!(matches!(stmt, Stmt::Function { params, .. } if params.len() == 1));
+    }
+
+    #[test]
+    fn stmt_function_declaration_returns_name_params_body() {
+        let name = make_token(TokenType::Identifier, "soma");
+        let params = vec![
+            make_token(TokenType::Identifier, "a"),
+            make_token(TokenType::Identifier, "b"),
+        ];
+        let body = vec![Stmt::Return {
+            keyword: make_token(TokenType::Return, "toma"),
+            value: None,
+            span: 0..5,
+        }];
+        let stmt = Stmt::Function {
+            name: name.clone(),
+            params: params.clone(),
+            body: body.clone(),
+            span: 0..30,
+        };
+
+        let (n, p, b) = stmt
+            .function_declaration()
+            .expect("should return Some for Function");
+        assert_eq!(n.lexeme, "soma");
+        assert_eq!(p.len(), 2);
+        assert_eq!(b.len(), 1);
+    }
+
+    #[test]
+    fn stmt_function_declaration_returns_none_for_var() {
+        let stmt = Stmt::var(make_token(TokenType::Identifier, "x"), None);
+        assert!(stmt.function_declaration().is_none());
+    }
+
+    #[test]
+    fn stmt_function_declaration_returns_none_for_print() {
+        let stmt = Stmt::print(Expr::Literal {
+            value: Literal::Nil,
+        });
+        assert!(stmt.function_declaration().is_none());
+    }
+
+    #[test]
+    fn stmt_function_declaration_returns_none_for_block() {
+        let stmt = Stmt::block(vec![]);
+        assert!(stmt.function_declaration().is_none());
+    }
+
+    #[test]
+    fn stmt_span_returns_span_for_function() {
+        let stmt = Stmt::Function {
+            name: make_token(TokenType::Identifier, "foo"),
+            params: vec![],
+            body: vec![],
+            span: 10..50,
+        };
+        assert_eq!(stmt.span(), 10..50);
+    }
+
+    #[test]
+    fn displays_lambda_with_params() {
+        let expr = Expr::Lambda {
+            params: vec![
+                make_token(TokenType::Identifier, "a"),
+                make_token(TokenType::Identifier, "b"),
+            ],
+            body: vec![],
+        };
+        assert_eq!(expr.to_string(), "(lambda a b)");
+    }
+
+    #[test]
+    fn displays_lambda_with_no_params() {
+        let expr = Expr::Lambda {
+            params: vec![],
+            body: vec![],
+        };
+        assert_eq!(expr.to_string(), "(lambda)");
     }
 }

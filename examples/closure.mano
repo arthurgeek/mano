@@ -1,0 +1,72 @@
+// Closures em mano!
+// Funções que capturam variáveis do escopo onde foram criadas
+
+// === Contador com closure ===
+// A função interna "conta" captura a variável "i" do escopo de makeContador
+olhaEssaFita makeContador() {
+    seLiga i = 0;
+    olhaEssaFita conta() {
+        i = i + 1;
+        salve i;
+    }
+    toma conta;
+}
+
+seLiga contador = makeContador();
+salve "Contando:";
+contador();  // 1
+contador();  // 2
+contador();  // 3
+
+// Cada contador tem seu próprio "i"
+seLiga outroContador = makeContador();
+salve "Outro contador:";
+outroContador();  // 1 (começa do zero!)
+contador();       // 4 (continua de onde parou)
+
+// === Gerador de multiplicadores ===
+olhaEssaFita multiplicador(fator) {
+    olhaEssaFita multiplica(n) {
+        toma n * fator;
+    }
+    toma multiplica;
+}
+
+seLiga dobro = multiplicador(2);
+seLiga triplo = multiplicador(3);
+
+salve "Dobro de 5:";
+salve dobro(5);   // 10
+
+salve "Triplo de 5:";
+salve triplo(5);  // 15
+
+// === Acumulador ===
+olhaEssaFita acumulador() {
+    seLiga total = 0;
+    olhaEssaFita adiciona(valor) {
+        total = total + valor;
+        toma total;
+    }
+    toma adiciona;
+}
+
+seLiga soma = acumulador();
+salve "Acumulando:";
+salve soma(10);   // 10
+salve soma(5);    // 15
+salve soma(25);   // 40
+
+// === Funções que retornam funções ===
+olhaEssaFita saudacao(cumprimento) {
+    olhaEssaFita cumprimenta(nome) {
+        salve cumprimento + ", " + nome + "!";
+    }
+    toma cumprimenta;
+}
+
+seLiga ola = saudacao("Olá");
+seLiga salveAi = saudacao("Salve");
+
+ola("mano");      // Olá, mano!
+salveAi("truta"); // Salve, truta!

@@ -1,5 +1,5 @@
 use crate::error::ManoError;
-use crate::token::{Token, TokenType, Value};
+use crate::token::{Literal, Token, TokenType};
 use unicode_properties::UnicodeEmoji;
 
 /// Check if a character can start an identifier
@@ -207,7 +207,7 @@ impl<'a> Scanner<'a> {
         }
     }
 
-    fn add_token_with_literal(&self, token_type: TokenType, literal: Value) -> Token {
+    fn add_token_with_literal(&self, token_type: TokenType, literal: Literal) -> Token {
         Token {
             token_type,
             lexeme: self.source[self.start..self.current].to_string(),
@@ -254,7 +254,7 @@ impl<'a> Scanner<'a> {
         }
 
         let value: f64 = self.source[self.start..self.current].parse().unwrap();
-        self.add_token_with_literal(TokenType::Number, Value::Number(value))
+        self.add_token_with_literal(TokenType::Number, Literal::Number(value))
     }
 
     fn string(&mut self) -> Result<Token, ManoError> {
@@ -275,7 +275,7 @@ impl<'a> Scanner<'a> {
 
         // Extract the string value (without quotes)
         let value = self.source[self.start + 1..self.current - 1].to_string();
-        Ok(self.add_token_with_literal(TokenType::String, Value::String(value)))
+        Ok(self.add_token_with_literal(TokenType::String, Literal::String(value)))
     }
 
     fn block_comment(&mut self) -> Result<(), ManoError> {
@@ -586,19 +586,19 @@ mod tests {
 
     #[test]
     fn scans_string_literal() {
-        use crate::token::Value;
+        use crate::token::Literal;
 
         let mut scanner = Scanner::new("\"mano\"");
         let token = scanner.next().unwrap().unwrap();
 
         assert_eq!(token.token_type, TokenType::String);
         assert_eq!(token.lexeme, "\"mano\"");
-        assert_eq!(token.literal, Some(Value::String("mano".to_string())));
+        assert_eq!(token.literal, Some(Literal::String("mano".to_string())));
     }
 
     #[test]
     fn scans_string_literal_with_unicode() {
-        use crate::token::Value;
+        use crate::token::Literal;
 
         let mut scanner = Scanner::new("\"e aí mano, beleza?\"");
         let token = scanner.next().unwrap().unwrap();
@@ -607,7 +607,7 @@ mod tests {
         assert_eq!(token.lexeme, "\"e aí mano, beleza?\"");
         assert_eq!(
             token.literal,
-            Some(Value::String("e aí mano, beleza?".to_string()))
+            Some(Literal::String("e aí mano, beleza?".to_string()))
         );
     }
 
@@ -640,7 +640,7 @@ mod tests {
 
     #[test]
     fn scans_multiline_string() {
-        use crate::token::Value;
+        use crate::token::Literal;
 
         let source = "\"primeira linha\nsegunda linha\"";
         let mut scanner = Scanner::new(source);
@@ -649,7 +649,7 @@ mod tests {
         assert_eq!(token.token_type, TokenType::String);
         assert_eq!(
             token.literal,
-            Some(Value::String("primeira linha\nsegunda linha".to_string()))
+            Some(Literal::String("primeira linha\nsegunda linha".to_string()))
         );
         assert_eq!(token.span, 0..source.len()); // Spans the entire string
 
@@ -664,7 +664,7 @@ mod tests {
 
         assert_eq!(token.token_type, TokenType::Number);
         assert_eq!(token.lexeme, "1234");
-        assert_eq!(token.literal, Some(Value::Number(1234.0)));
+        assert_eq!(token.literal, Some(Literal::Number(1234.0)));
     }
 
     #[test]
@@ -674,7 +674,7 @@ mod tests {
 
         assert_eq!(token.token_type, TokenType::Number);
         assert_eq!(token.lexeme, "12.34");
-        assert_eq!(token.literal, Some(Value::Number(12.34)));
+        assert_eq!(token.literal, Some(Literal::Number(12.34)));
     }
 
     #[test]
@@ -684,7 +684,7 @@ mod tests {
 
         let num = scanner.next().unwrap().unwrap();
         assert_eq!(num.token_type, TokenType::Number);
-        assert_eq!(num.literal, Some(Value::Number(1234.0)));
+        assert_eq!(num.literal, Some(Literal::Number(1234.0)));
 
         let dot = scanner.next().unwrap().unwrap();
         assert_eq!(dot.token_type, TokenType::Dot);
@@ -700,7 +700,7 @@ mod tests {
 
         let num = scanner.next().unwrap().unwrap();
         assert_eq!(num.token_type, TokenType::Number);
-        assert_eq!(num.literal, Some(Value::Number(1234.0)));
+        assert_eq!(num.literal, Some(Literal::Number(1234.0)));
     }
 
     #[test]

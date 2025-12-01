@@ -57,7 +57,7 @@ pub enum TokenType {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub enum Value {
+pub enum Literal {
     Number(f64),
     String(String),
     Bool(bool),
@@ -70,7 +70,7 @@ use std::ops::Range;
 pub struct Token {
     pub token_type: TokenType,
     pub lexeme: String,
-    pub literal: Option<Value>,
+    pub literal: Option<Literal>,
     pub span: Range<usize>,
 }
 
@@ -83,14 +83,14 @@ impl std::fmt::Display for Token {
     }
 }
 
-impl std::fmt::Display for Value {
+impl std::fmt::Display for Literal {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Value::Number(n) => write!(f, "{}", n),
-            Value::String(s) => write!(f, "{}", s),
-            Value::Bool(true) => write!(f, "firmeza"),
-            Value::Bool(false) => write!(f, "treta"),
-            Value::Nil => write!(f, "nadaNão"),
+            Literal::Number(n) => write!(f, "{}", n),
+            Literal::String(s) => write!(f, "{}", s),
+            Literal::Bool(true) => write!(f, "firmeza"),
+            Literal::Bool(false) => write!(f, "treta"),
+            Literal::Nil => write!(f, "nadaNão"),
         }
     }
 }
@@ -115,27 +115,27 @@ mod tests {
         let token = Token {
             token_type: TokenType::LeftParen,
             lexeme: "42".to_string(),
-            literal: Some(Value::Number(42.0)),
+            literal: Some(Literal::Number(42.0)),
             span: 0..2,
         };
         assert_eq!(token.to_string(), "LeftParen 42 42");
     }
 
     #[test]
-    fn value_bool_true_displays_correctly() {
-        let value = Value::Bool(true);
+    fn literal_bool_true_displays_correctly() {
+        let value = Literal::Bool(true);
         assert_eq!(value.to_string(), "firmeza");
     }
 
     #[test]
-    fn value_bool_false_displays_correctly() {
-        let value = Value::Bool(false);
+    fn literal_bool_false_displays_correctly() {
+        let value = Literal::Bool(false);
         assert_eq!(value.to_string(), "treta");
     }
 
     #[test]
-    fn value_nil_displays_correctly() {
-        let value = Value::Nil;
+    fn literal_nil_displays_correctly() {
+        let value = Literal::Nil;
         assert_eq!(value.to_string(), "nadaNão");
     }
 
@@ -144,7 +144,7 @@ mod tests {
         let token = Token {
             token_type: TokenType::Number,
             lexeme: "42".to_string(),
-            literal: Some(Value::Number(42.0)),
+            literal: Some(Literal::Number(42.0)),
             span: 0..2,
         };
         assert_eq!(token.span, 0..2);

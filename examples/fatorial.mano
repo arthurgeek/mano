@@ -1,16 +1,15 @@
-// Fatorial iterativo
+// Fatorial recursivo
 
-seLiga n = 10;
-seLiga resultado = 1;
-
-salve "Calculando";
-salve n;
-salve "fatorial...";
-
-seLiga i = 2;
-segueOFluxo (i <= n) {
-    resultado = resultado * i;
-    i = i + 1;
+olhaEssaFita fatorial(n) {
+    sePá (n <= 1) toma 1;
+    toma n * fatorial(n - 1);
 }
 
-oiSumida resultado;  // Quanto tempo sem te ver!
+salve "5! =";
+salve fatorial(5);
+
+salve "10! =";
+salve fatorial(10);
+
+salve "12! =";
+salve fatorial(12);

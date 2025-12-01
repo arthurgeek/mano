@@ -1,0 +1,47 @@
+// Lambdas em mano!
+// Funções anônimas usando olhaEssaFita sem nome
+
+// === Passando lambda como argumento ===
+olhaEssaFita tresVezes(fn) {
+    seVira (seLiga i = 1; i <= 3; i = i + 1) {
+        fn(i);
+    }
+}
+
+salve "Chamando lambda 3 vezes:";
+tresVezes(olhaEssaFita (n) { salve n * n; });
+
+// === Lambda com múltiplos parâmetros ===
+olhaEssaFita aplica(fn, a, b) {
+    toma fn(a, b);
+}
+
+salve "Soma via lambda:";
+salve aplica(olhaEssaFita (x, y) { toma x + y; }, 10, 20);
+
+salve "Multiplicação via lambda:";
+salve aplica(olhaEssaFita (x, y) { toma x * y; }, 6, 7);
+
+// === Lambda retornada de função (closure) ===
+olhaEssaFita multiplicador(fator) {
+    toma olhaEssaFita (n) { toma n * fator; };
+}
+
+seLiga dobro = multiplicador(2);
+seLiga triplo = multiplicador(3);
+
+salve "Dobro de 5:";
+salve dobro(5);
+
+salve "Triplo de 5:";
+salve triplo(5);
+
+// === Lambda inline vs closure nomeada ===
+olhaEssaFita mapeia(fn, a, b, c) {
+    salve fn(a);
+    salve fn(b);
+    salve fn(c);
+}
+
+salve "Quadrados:";
+mapeia(olhaEssaFita (x) { toma x * x; }, 2, 3, 4);

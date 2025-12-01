@@ -1,4 +1,4 @@
-// Tudo que o mano sabe fazer (por enquanto)!
+// Tudo que o mano sabe fazer!
 
 // === Print ===
 salve "E aí!";         // salve = print normal
@@ -119,6 +119,53 @@ segueOFluxo (k < 100) {
     salve k;
     k = k + 1;
 }
+
+// === Funções ===
+olhaEssaFita saudação(nome) {
+    salve "Salve, " + nome + "!";
+}
+
+saudação("mano");
+saudação("truta");
+
+// === Funções com retorno ===
+olhaEssaFita soma(a, b) {
+    toma a + b;
+}
+
+salve "2 + 3 =";
+salve soma(2, 3);
+
+// === Recursão ===
+olhaEssaFita fatorial(n) {
+    sePá (n <= 1) toma 1;
+    toma n * fatorial(n - 1);
+}
+
+salve "5! =";
+salve fatorial(5);
+
+// === Função nativa ===
+salve "Tempo atual (segundos desde 1970):";
+salve fazTeuCorre();
+
+// === Closures ===
+olhaEssaFita makeContador() {
+    seLiga i = 0;
+    olhaEssaFita conta() {
+        i = i + 1;
+        toma i;
+    }
+    toma conta;
+}
+
+seLiga cnt = makeContador();
+salve cnt();  // 1
+salve cnt();  // 2
+
+// === Lambdas ===
+olhaEssaFita aplica(fn, x) { toma fn(x); }
+salve aplica(olhaEssaFita (n) { toma n * n; }, 5);  // 25
 
 /*
    Comentário de bloco

@@ -1,10 +1,11 @@
-// Fibonacci - todos os números até 10000
+// Fibonacci recursivo
 
-seLiga atual = 0;
-seLiga temp;
+olhaEssaFita fib(n) {
+    sePá (n <= 1) toma n;
+    toma fib(n - 1) + fib(n - 2);
+}
 
-seVira (seLiga próximo = 1; atual < 10000; próximo = temp + próximo) {
-    salve atual;
-    temp = atual;
-    atual = próximo;
+// Mostra os primeiros 20 números de Fibonacci
+seVira (seLiga i = 0; i < 20; i = i + 1) {
+    salve fib(i);
 }

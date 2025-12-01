@@ -1,6 +1,8 @@
 use std::ops::Range;
 use thiserror::Error;
 
+use crate::value::Value;
+
 #[derive(Debug, Error)]
 pub enum ManoError {
     #[error("Pô, véi! Cadê o arquivo?")]
@@ -17,6 +19,9 @@ pub enum ManoError {
 
     #[error("")]
     Break,
+
+    #[error("")]
+    Return(Value),
 }
 
 #[cfg(test)]

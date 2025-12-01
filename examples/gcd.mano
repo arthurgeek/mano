@@ -1,19 +1,16 @@
 // Algoritmo de Euclides para MDC (Máximo Divisor Comum)
-// Um dos algoritmos mais antigos da história!
+// Versão recursiva - um dos algoritmos mais antigos da história!
 
-seLiga a = 48;
-seLiga b = 18;
-
-salve "MDC de";
-salve a;
-salve "e";
-salve b;
-
-segueOFluxo (b != 0) {
-    seLiga temp = b;
-    b = a % b;
-    a = temp;
+olhaEssaFita mdc(a, b) {
+    sePá (b == 0) toma a;
+    toma mdc(b, a % b);
 }
 
-salve "é";
-salve a;
+salve "MDC(48, 18) =";
+salve mdc(48, 18);
+
+salve "MDC(100, 35) =";
+salve mdc(100, 35);
+
+salve "MDC(17, 23) =";
+salve mdc(17, 23);

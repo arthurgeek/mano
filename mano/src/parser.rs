@@ -1,6 +1,6 @@
 use crate::ast::{Expr, Stmt};
 use crate::error::ManoError;
-use crate::token::{Token, TokenType, Value};
+use crate::token::{Literal, Token, TokenType};
 
 pub struct Parser {
     tokens: Vec<Token>,
@@ -34,7 +34,17 @@ impl Parser {
     }
 
     fn declaration(&mut self) -> Option<Stmt> {
-        let result = if self.match_types(&[TokenType::Var]) {
+        // Check for named function: olhaEssaFita followed by identifier
+        // Lambda expressions (olhaEssaFita followed by '(') are handled as expression statements
+        let is_named_function = self.check(&TokenType::Fun)
+            && self
+                .peek_next()
+                .is_some_and(|t| t.token_type == TokenType::Identifier);
+
+        let result = if is_named_function {
+            self.advance(); // consume 'olhaEssaFita'
+            self.function_declaration()
+        } else if self.match_types(&[TokenType::Var]) {
             self.var_declaration()
         } else {
             self.statement()
@@ -48,6 +58,73 @@ impl Parser {
                 None
             }
         }
+    }
+
+    fn function_declaration(&mut self) -> Result<Stmt, ManoError> {
+        let start = self.previous().span.start;
+        let name = self
+            .consume(TokenType::Identifier, "Cadê o nome da fita, tio?")?
+            .clone();
+
+        self.consume(
+            TokenType::LeftParen,
+            "Cadê o '(' depois do nome da fita, maluco?",
+        )?;
+
+        let mut params = Vec::new();
+        if !self.check(&TokenType::RightParen) {
+            loop {
+                if params.len() >= 255 {
+                    self.errors.push(ManoError::Parse {
+                        message: "Não pode ter mais de 255 parâmetros, véi!".to_string(),
+                        span: self.peek().span.clone(),
+                    });
+                }
+                params.push(
+                    self.consume(TokenType::Identifier, "Cadê o nome do parâmetro, parça?")?
+                        .clone(),
+                );
+                if !self.match_types(&[TokenType::Comma]) {
+                    break;
+                }
+            }
+        }
+
+        self.consume(
+            TokenType::RightParen,
+            "Cadê o ')' depois dos parâmetros, chapa?",
+        )?;
+        self.consume(
+            TokenType::LeftBrace,
+            "Cadê o '{' antes do corpo da fita, tio?",
+        )?;
+
+        let body = self.block_statements()?;
+        let end = self.previous().span.end;
+
+        Ok(Stmt::Function {
+            name,
+            params,
+            body,
+            span: start..end,
+        })
+    }
+
+    fn block_statements(&mut self) -> Result<Vec<Stmt>, ManoError> {
+        let mut statements = Vec::new();
+
+        while !self.check(&TokenType::RightBrace) && !self.is_at_end() {
+            if let Some(stmt) = self.declaration() {
+                statements.push(stmt);
+            }
+        }
+
+        self.consume(
+            TokenType::RightBrace,
+            "Cadê o '}' pra fechar o bloco, maluco?",
+        )?;
+
+        Ok(statements)
     }
 
     fn var_declaration(&mut self) -> Result<Stmt, ManoError> {
@@ -81,6 +158,8 @@ impl Parser {
             self.for_statement()
         } else if self.match_types(&[TokenType::If]) {
             self.if_statement()
+        } else if self.match_types(&[TokenType::Return]) {
+            self.return_statement()
         } else if self.match_types(&[TokenType::While]) {
             self.while_statement()
         } else if self.match_types(&[TokenType::LeftBrace]) {
@@ -104,6 +183,28 @@ impl Parser {
         Ok(Stmt::Break { span: 0..0 })
     }
 
+    fn return_statement(&mut self) -> Result<Stmt, ManoError> {
+        let keyword = self.previous().clone();
+        let start = keyword.span.start;
+
+        let value = if !self.check(&TokenType::Semicolon) {
+            Some(self.ternary()?)
+        } else {
+            None
+        };
+
+        let end = self
+            .consume(TokenType::Semicolon, "Cadê o ';' depois do toma, véi?")?
+            .span
+            .end;
+
+        Ok(Stmt::Return {
+            keyword,
+            value,
+            span: start..end,
+        })
+    }
+
     fn for_statement(&mut self) -> Result<Stmt, ManoError> {
         let start = self.previous().span.start;
         self.consume(TokenType::LeftParen, "Cadê o '(' depois do seVira, mano?")?;
@@ -120,7 +221,7 @@ impl Parser {
         // Condition
         let condition = if self.check(&TokenType::Semicolon) {
             Expr::Literal {
-                value: Value::Bool(true),
+                value: Literal::Bool(true),
             }
         } else {
             self.expression()?
@@ -437,7 +538,53 @@ impl Parser {
                 right: Box::new(right),
             });
         }
-        self.primary()
+        self.call()
+    }
+
+    fn call(&mut self) -> Result<Expr, ManoError> {
+        let mut expr = self.primary()?;
+
+        loop {
+            if self.match_types(&[TokenType::LeftParen]) {
+                expr = self.finish_call(expr)?;
+            } else {
+                break;
+            }
+        }
+
+        Ok(expr)
+    }
+
+    fn finish_call(&mut self, callee: Expr) -> Result<Expr, ManoError> {
+        let mut arguments = Vec::new();
+
+        if !self.check(&TokenType::RightParen) {
+            loop {
+                if arguments.len() >= 255 {
+                    self.errors.push(ManoError::Parse {
+                        message: "Não pode ter mais de 255 argumentos, tio!".to_string(),
+                        span: self.peek().span.clone(),
+                    });
+                }
+                arguments.push(self.ternary()?);
+                if !self.match_types(&[TokenType::Comma]) {
+                    break;
+                }
+            }
+        }
+
+        let paren = self
+            .consume(
+                TokenType::RightParen,
+                "Cadê o ')' depois dos argumentos, maluco?",
+            )?
+            .clone();
+
+        Ok(Expr::Call {
+            callee: Box::new(callee),
+            paren,
+            arguments,
+        })
     }
 
     fn match_types(&mut self, types: &[TokenType]) -> bool {
@@ -456,18 +603,20 @@ impl Parser {
             TokenType::False => {
                 self.advance();
                 Ok(Expr::Literal {
-                    value: Value::Bool(false),
+                    value: Literal::Bool(false),
                 })
             }
             TokenType::True => {
                 self.advance();
                 Ok(Expr::Literal {
-                    value: Value::Bool(true),
+                    value: Literal::Bool(true),
                 })
             }
             TokenType::Nil => {
                 self.advance();
-                Ok(Expr::Literal { value: Value::Nil })
+                Ok(Expr::Literal {
+                    value: Literal::Nil,
+                })
             }
             TokenType::Number | TokenType::String => {
                 let value = token.literal.clone().unwrap();
@@ -487,11 +636,54 @@ impl Parser {
                 self.advance();
                 Ok(Expr::Variable { name })
             }
+            TokenType::Fun => {
+                self.advance(); // consume 'olhaEssaFita'
+                self.lambda()
+            }
             _ => Err(ManoError::Parse {
                 message: "Cadê a expressão, jão?".to_string(),
                 span: token.span.clone(),
             }),
         }
+    }
+
+    fn lambda(&mut self) -> Result<Expr, ManoError> {
+        self.consume(
+            TokenType::LeftParen,
+            "Cadê o '(' depois do olhaEssaFita, mano?",
+        )?;
+
+        let mut params = Vec::new();
+        if !self.check(&TokenType::RightParen) {
+            loop {
+                if params.len() >= 255 {
+                    let span = self.peek().span.clone();
+                    self.errors.push(ManoError::Parse {
+                        message: "Eita, mais de 255 parâmetros é demais, parça!".to_string(),
+                        span,
+                    });
+                }
+                let param =
+                    self.consume(TokenType::Identifier, "Cadê o nome do parâmetro, chapa?")?;
+                params.push(param.clone());
+
+                if !self.match_types(&[TokenType::Comma]) {
+                    break;
+                }
+            }
+        }
+        self.consume(
+            TokenType::RightParen,
+            "Cadê o ')' depois dos parâmetros, véi?",
+        )?;
+
+        self.consume(
+            TokenType::LeftBrace,
+            "Cadê o '{' antes do corpo da lambda, mano?",
+        )?;
+        let body = self.block_statements()?;
+
+        Ok(Expr::Lambda { params, body })
     }
 
     fn consume(&mut self, token_type: TokenType, message: &str) -> Result<&Token, ManoError> {
@@ -555,15 +747,23 @@ impl Parser {
     fn previous(&self) -> &Token {
         &self.tokens[self.current - 1]
     }
+
+    fn peek_next(&self) -> Option<&Token> {
+        if self.current + 1 < self.tokens.len() {
+            Some(&self.tokens[self.current + 1])
+        } else {
+            None
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::ast::Stmt;
-    use crate::token::{TokenType, Value};
+    use crate::token::{Literal, TokenType};
 
-    fn make_token(token_type: TokenType, lexeme: &str, literal: Option<Value>) -> Token {
+    fn make_token(token_type: TokenType, lexeme: &str, literal: Option<Literal>) -> Token {
         Token {
             token_type,
             lexeme: lexeme.to_string(),
@@ -595,7 +795,7 @@ mod tests {
     #[test]
     fn parses_number_literal() {
         let tokens = vec![
-            make_token(TokenType::Number, "42", Some(Value::Number(42.0))),
+            make_token(TokenType::Number, "42", Some(Literal::Number(42.0))),
             semi(),
             eof(),
         ];
@@ -605,7 +805,7 @@ mod tests {
         match &stmts[0] {
             Stmt::Expression { expression, .. } => {
                 assert!(
-                    matches!(expression, Expr::Literal { value: Value::Number(n) } if *n == 42.0)
+                    matches!(expression, Expr::Literal { value: Literal::Number(n) } if *n == 42.0)
                 );
             }
             _ => panic!("expected expression statement"),
@@ -618,7 +818,7 @@ mod tests {
             make_token(
                 TokenType::String,
                 "\"mano\"",
-                Some(Value::String("mano".to_string())),
+                Some(Literal::String("mano".to_string())),
             ),
             semi(),
             eof(),
@@ -628,7 +828,7 @@ mod tests {
         match &stmts[0] {
             Stmt::Expression { expression, .. } => {
                 assert!(
-                    matches!(expression, Expr::Literal { value: Value::String(s) } if s == "mano")
+                    matches!(expression, Expr::Literal { value: Literal::String(s) } if s == "mano")
                 );
             }
             _ => panic!("expected expression statement"),
@@ -645,7 +845,7 @@ mod tests {
                 assert!(matches!(
                     expression,
                     Expr::Literal {
-                        value: Value::Bool(true)
+                        value: Literal::Bool(true)
                     }
                 ));
             }
@@ -663,7 +863,7 @@ mod tests {
                 assert!(matches!(
                     expression,
                     Expr::Literal {
-                        value: Value::Bool(false)
+                        value: Literal::Bool(false)
                     }
                 ));
             }
@@ -678,7 +878,12 @@ mod tests {
         let stmts = parser.parse().unwrap();
         match &stmts[0] {
             Stmt::Expression { expression, .. } => {
-                assert!(matches!(expression, Expr::Literal { value: Value::Nil }));
+                assert!(matches!(
+                    expression,
+                    Expr::Literal {
+                        value: Literal::Nil
+                    }
+                ));
             }
             _ => panic!("expected expression statement"),
         }
@@ -688,7 +893,7 @@ mod tests {
     fn parses_grouping() {
         let tokens = vec![
             make_token(TokenType::LeftParen, "(", None),
-            make_token(TokenType::Number, "42", Some(Value::Number(42.0))),
+            make_token(TokenType::Number, "42", Some(Literal::Number(42.0))),
             make_token(TokenType::RightParen, ")", None),
             semi(),
             eof(),
@@ -709,7 +914,7 @@ mod tests {
     fn parses_unary_minus() {
         let tokens = vec![
             make_token(TokenType::Minus, "-", None),
-            make_token(TokenType::Number, "5", Some(Value::Number(5.0))),
+            make_token(TokenType::Number, "5", Some(Literal::Number(5.0))),
             semi(),
             eof(),
         ];
@@ -746,9 +951,9 @@ mod tests {
     #[test]
     fn parses_multiplication() {
         let tokens = vec![
-            make_token(TokenType::Number, "2", Some(Value::Number(2.0))),
+            make_token(TokenType::Number, "2", Some(Literal::Number(2.0))),
             make_token(TokenType::Star, "*", None),
-            make_token(TokenType::Number, "3", Some(Value::Number(3.0))),
+            make_token(TokenType::Number, "3", Some(Literal::Number(3.0))),
             semi(),
             eof(),
         ];
@@ -765,9 +970,9 @@ mod tests {
     #[test]
     fn parses_division() {
         let tokens = vec![
-            make_token(TokenType::Number, "6", Some(Value::Number(6.0))),
+            make_token(TokenType::Number, "6", Some(Literal::Number(6.0))),
             make_token(TokenType::Slash, "/", None),
-            make_token(TokenType::Number, "2", Some(Value::Number(2.0))),
+            make_token(TokenType::Number, "2", Some(Literal::Number(2.0))),
             semi(),
             eof(),
         ];
@@ -784,9 +989,9 @@ mod tests {
     #[test]
     fn parses_modulo() {
         let tokens = vec![
-            make_token(TokenType::Number, "10", Some(Value::Number(10.0))),
+            make_token(TokenType::Number, "10", Some(Literal::Number(10.0))),
             make_token(TokenType::Percent, "%", None),
-            make_token(TokenType::Number, "3", Some(Value::Number(3.0))),
+            make_token(TokenType::Number, "3", Some(Literal::Number(3.0))),
             semi(),
             eof(),
         ];
@@ -805,9 +1010,9 @@ mod tests {
     #[test]
     fn parses_addition() {
         let tokens = vec![
-            make_token(TokenType::Number, "1", Some(Value::Number(1.0))),
+            make_token(TokenType::Number, "1", Some(Literal::Number(1.0))),
             make_token(TokenType::Plus, "+", None),
-            make_token(TokenType::Number, "2", Some(Value::Number(2.0))),
+            make_token(TokenType::Number, "2", Some(Literal::Number(2.0))),
             semi(),
             eof(),
         ];
@@ -824,9 +1029,9 @@ mod tests {
     #[test]
     fn parses_subtraction() {
         let tokens = vec![
-            make_token(TokenType::Number, "5", Some(Value::Number(5.0))),
+            make_token(TokenType::Number, "5", Some(Literal::Number(5.0))),
             make_token(TokenType::Minus, "-", None),
-            make_token(TokenType::Number, "3", Some(Value::Number(3.0))),
+            make_token(TokenType::Number, "3", Some(Literal::Number(3.0))),
             semi(),
             eof(),
         ];
@@ -845,9 +1050,9 @@ mod tests {
     #[test]
     fn parses_greater_than() {
         let tokens = vec![
-            make_token(TokenType::Number, "5", Some(Value::Number(5.0))),
+            make_token(TokenType::Number, "5", Some(Literal::Number(5.0))),
             make_token(TokenType::Greater, ">", None),
-            make_token(TokenType::Number, "3", Some(Value::Number(3.0))),
+            make_token(TokenType::Number, "3", Some(Literal::Number(3.0))),
             semi(),
             eof(),
         ];
@@ -864,9 +1069,9 @@ mod tests {
     #[test]
     fn parses_less_than() {
         let tokens = vec![
-            make_token(TokenType::Number, "3", Some(Value::Number(3.0))),
+            make_token(TokenType::Number, "3", Some(Literal::Number(3.0))),
             make_token(TokenType::Less, "<", None),
-            make_token(TokenType::Number, "5", Some(Value::Number(5.0))),
+            make_token(TokenType::Number, "5", Some(Literal::Number(5.0))),
             semi(),
             eof(),
         ];
@@ -885,9 +1090,9 @@ mod tests {
     #[test]
     fn parses_equal_equal() {
         let tokens = vec![
-            make_token(TokenType::Number, "1", Some(Value::Number(1.0))),
+            make_token(TokenType::Number, "1", Some(Literal::Number(1.0))),
             make_token(TokenType::EqualEqual, "==", None),
-            make_token(TokenType::Number, "1", Some(Value::Number(1.0))),
+            make_token(TokenType::Number, "1", Some(Literal::Number(1.0))),
             semi(),
             eof(),
         ];
@@ -904,9 +1109,9 @@ mod tests {
     #[test]
     fn parses_bang_equal() {
         let tokens = vec![
-            make_token(TokenType::Number, "1", Some(Value::Number(1.0))),
+            make_token(TokenType::Number, "1", Some(Literal::Number(1.0))),
             make_token(TokenType::BangEqual, "!=", None),
-            make_token(TokenType::Number, "2", Some(Value::Number(2.0))),
+            make_token(TokenType::Number, "2", Some(Literal::Number(2.0))),
             semi(),
             eof(),
         ];
@@ -936,7 +1141,7 @@ mod tests {
     fn error_on_unclosed_grouping() {
         let tokens = vec![
             make_token(TokenType::LeftParen, "(", None),
-            make_token(TokenType::Number, "42", Some(Value::Number(42.0))),
+            make_token(TokenType::Number, "42", Some(Literal::Number(42.0))),
             semi(),
             eof(),
         ];
@@ -952,9 +1157,9 @@ mod tests {
     #[test]
     fn parses_comma_expression() {
         let tokens = vec![
-            make_token(TokenType::Number, "1", Some(Value::Number(1.0))),
+            make_token(TokenType::Number, "1", Some(Literal::Number(1.0))),
             make_token(TokenType::Comma, ",", None),
-            make_token(TokenType::Number, "2", Some(Value::Number(2.0))),
+            make_token(TokenType::Number, "2", Some(Literal::Number(2.0))),
             semi(),
             eof(),
         ];
@@ -972,11 +1177,11 @@ mod tests {
     #[test]
     fn comma_is_left_associative() {
         let tokens = vec![
-            make_token(TokenType::Number, "1", Some(Value::Number(1.0))),
+            make_token(TokenType::Number, "1", Some(Literal::Number(1.0))),
             make_token(TokenType::Comma, ",", None),
-            make_token(TokenType::Number, "2", Some(Value::Number(2.0))),
+            make_token(TokenType::Number, "2", Some(Literal::Number(2.0))),
             make_token(TokenType::Comma, ",", None),
-            make_token(TokenType::Number, "3", Some(Value::Number(3.0))),
+            make_token(TokenType::Number, "3", Some(Literal::Number(3.0))),
             semi(),
             eof(),
         ];
@@ -997,9 +1202,9 @@ mod tests {
         let tokens = vec![
             make_token(TokenType::True, "firmeza", None),
             make_token(TokenType::Question, "?", None),
-            make_token(TokenType::Number, "1", Some(Value::Number(1.0))),
+            make_token(TokenType::Number, "1", Some(Literal::Number(1.0))),
             make_token(TokenType::Colon, ":", None),
-            make_token(TokenType::Number, "2", Some(Value::Number(2.0))),
+            make_token(TokenType::Number, "2", Some(Literal::Number(2.0))),
             semi(),
             eof(),
         ];
@@ -1019,13 +1224,13 @@ mod tests {
         let tokens = vec![
             make_token(TokenType::True, "firmeza", None),
             make_token(TokenType::Question, "?", None),
-            make_token(TokenType::Number, "1", Some(Value::Number(1.0))),
+            make_token(TokenType::Number, "1", Some(Literal::Number(1.0))),
             make_token(TokenType::Colon, ":", None),
             make_token(TokenType::False, "treta", None),
             make_token(TokenType::Question, "?", None),
-            make_token(TokenType::Number, "2", Some(Value::Number(2.0))),
+            make_token(TokenType::Number, "2", Some(Literal::Number(2.0))),
             make_token(TokenType::Colon, ":", None),
-            make_token(TokenType::Number, "3", Some(Value::Number(3.0))),
+            make_token(TokenType::Number, "3", Some(Literal::Number(3.0))),
             semi(),
             eof(),
         ];
@@ -1045,7 +1250,7 @@ mod tests {
     fn error_on_binary_without_left_operand() {
         let tokens = vec![
             make_token(TokenType::Star, "*", None),
-            make_token(TokenType::Number, "3", Some(Value::Number(3.0))),
+            make_token(TokenType::Number, "3", Some(Literal::Number(3.0))),
             semi(),
             eof(),
         ];
@@ -1060,7 +1265,7 @@ mod tests {
     fn error_on_plus_without_left_operand() {
         let tokens = vec![
             make_token(TokenType::Plus, "+", None),
-            make_token(TokenType::Number, "3", Some(Value::Number(3.0))),
+            make_token(TokenType::Number, "3", Some(Literal::Number(3.0))),
             semi(),
             eof(),
         ];
@@ -1079,7 +1284,7 @@ mod tests {
             make_token(TokenType::Plus, "+", None),
             make_token(TokenType::Star, "*", None),
             make_token(TokenType::Semicolon, ";", None),
-            make_token(TokenType::Number, "42", Some(Value::Number(42.0))),
+            make_token(TokenType::Number, "42", Some(Literal::Number(42.0))),
             eof(),
         ];
         let mut parser = Parser::new(tokens);
@@ -1110,7 +1315,7 @@ mod tests {
             make_token(TokenType::Var, "seLiga", None),
             make_token(TokenType::Identifier, "x", None),
             make_token(TokenType::Equal, "=", None),
-            make_token(TokenType::Number, "42", Some(Value::Number(42.0))),
+            make_token(TokenType::Number, "42", Some(Literal::Number(42.0))),
             semi(),
             eof(),
         ];
@@ -1159,7 +1364,7 @@ mod tests {
         let tokens = vec![
             make_token(TokenType::Identifier, "x", None),
             make_token(TokenType::Equal, "=", None),
-            make_token(TokenType::Number, "42", Some(Value::Number(42.0))),
+            make_token(TokenType::Number, "42", Some(Literal::Number(42.0))),
             semi(),
             eof(),
         ];
@@ -1200,10 +1405,10 @@ mod tests {
         let tokens = vec![
             make_token(TokenType::Var, "seLiga", None),
             make_token(TokenType::Equal, "=", None), // error: missing identifier
-            make_token(TokenType::Number, "42", Some(Value::Number(42.0))),
+            make_token(TokenType::Number, "42", Some(Literal::Number(42.0))),
             semi(),
             make_token(TokenType::Print, "salve", None),
-            make_token(TokenType::Number, "1", Some(Value::Number(1.0))),
+            make_token(TokenType::Number, "1", Some(Literal::Number(1.0))),
             semi(),
             eof(),
         ];
@@ -1222,7 +1427,7 @@ mod tests {
     fn parses_print_statement() {
         let tokens = vec![
             make_token(TokenType::Print, "salve", None),
-            make_token(TokenType::Number, "42", Some(Value::Number(42.0))),
+            make_token(TokenType::Number, "42", Some(Literal::Number(42.0))),
             semi(),
             eof(),
         ];
@@ -1237,10 +1442,10 @@ mod tests {
         // salve 1; salve 2;
         let tokens = vec![
             make_token(TokenType::Print, "salve", None),
-            make_token(TokenType::Number, "1", Some(Value::Number(1.0))),
+            make_token(TokenType::Number, "1", Some(Literal::Number(1.0))),
             semi(),
             make_token(TokenType::Print, "salve", None),
-            make_token(TokenType::Number, "2", Some(Value::Number(2.0))),
+            make_token(TokenType::Number, "2", Some(Literal::Number(2.0))),
             semi(),
             eof(),
         ];
@@ -1273,10 +1478,10 @@ mod tests {
         let tokens = vec![
             make_token(TokenType::LeftBrace, "{", None),
             make_token(TokenType::Print, "salve", None),
-            make_token(TokenType::Number, "1", Some(Value::Number(1.0))),
+            make_token(TokenType::Number, "1", Some(Literal::Number(1.0))),
             semi(),
             make_token(TokenType::Print, "salve", None),
-            make_token(TokenType::Number, "2", Some(Value::Number(2.0))),
+            make_token(TokenType::Number, "2", Some(Literal::Number(2.0))),
             semi(),
             make_token(TokenType::RightBrace, "}", None),
             eof(),
@@ -1288,10 +1493,10 @@ mod tests {
             Stmt::Block { statements, .. } => {
                 assert_eq!(statements.len(), 2);
                 assert!(
-                    matches!(&statements[0], Stmt::Print { expression: Expr::Literal { value: Value::Number(n) }, .. } if *n == 1.0)
+                    matches!(&statements[0], Stmt::Print { expression: Expr::Literal { value: Literal::Number(n) }, .. } if *n == 1.0)
                 );
                 assert!(
-                    matches!(&statements[1], Stmt::Print { expression: Expr::Literal { value: Value::Number(n) }, .. } if *n == 2.0)
+                    matches!(&statements[1], Stmt::Print { expression: Expr::Literal { value: Literal::Number(n) }, .. } if *n == 2.0)
                 );
             }
             _ => panic!("expected block"),
@@ -1305,7 +1510,7 @@ mod tests {
             make_token(TokenType::LeftBrace, "{", None),
             make_token(TokenType::LeftBrace, "{", None),
             make_token(TokenType::Print, "salve", None),
-            make_token(TokenType::Number, "1", Some(Value::Number(1.0))),
+            make_token(TokenType::Number, "1", Some(Literal::Number(1.0))),
             semi(),
             make_token(TokenType::RightBrace, "}", None),
             make_token(TokenType::RightBrace, "}", None),
@@ -1327,9 +1532,9 @@ mod tests {
     fn error_on_invalid_assignment_target() {
         // 1 = 2; (can't assign to a literal)
         let tokens = vec![
-            make_token(TokenType::Number, "1", Some(Value::Number(1.0))),
+            make_token(TokenType::Number, "1", Some(Literal::Number(1.0))),
             make_token(TokenType::Equal, "=", None),
-            make_token(TokenType::Number, "2", Some(Value::Number(2.0))),
+            make_token(TokenType::Number, "2", Some(Literal::Number(2.0))),
             semi(),
             eof(),
         ];
@@ -1347,9 +1552,9 @@ mod tests {
     #[test]
     fn take_errors_returns_and_clears_errors() {
         let tokens = vec![
-            make_token(TokenType::Number, "1", Some(Value::Number(1.0))),
+            make_token(TokenType::Number, "1", Some(Literal::Number(1.0))),
             make_token(TokenType::Equal, "=", None),
-            make_token(TokenType::Number, "2", Some(Value::Number(2.0))),
+            make_token(TokenType::Number, "2", Some(Literal::Number(2.0))),
             semi(),
             eof(),
         ];
@@ -1375,7 +1580,7 @@ mod tests {
             make_token(TokenType::True, "firmeza", None),
             make_token(TokenType::RightParen, ")", None),
             make_token(TokenType::Print, "salve", None),
-            make_token(TokenType::Number, "1", Some(Value::Number(1.0))),
+            make_token(TokenType::Number, "1", Some(Literal::Number(1.0))),
             semi(),
             eof(),
         ];
@@ -1392,7 +1597,7 @@ mod tests {
                 assert!(matches!(
                     condition,
                     Expr::Literal {
-                        value: Value::Bool(true)
+                        value: Literal::Bool(true)
                     }
                 ));
                 assert!(matches!(then_branch.as_ref(), Stmt::Print { .. }));
@@ -1411,11 +1616,11 @@ mod tests {
             make_token(TokenType::False, "treta", None),
             make_token(TokenType::RightParen, ")", None),
             make_token(TokenType::Print, "salve", None),
-            make_token(TokenType::Number, "1", Some(Value::Number(1.0))),
+            make_token(TokenType::Number, "1", Some(Literal::Number(1.0))),
             semi(),
             make_token(TokenType::Else, "vacilou", None),
             make_token(TokenType::Print, "salve", None),
-            make_token(TokenType::Number, "2", Some(Value::Number(2.0))),
+            make_token(TokenType::Number, "2", Some(Literal::Number(2.0))),
             semi(),
             eof(),
         ];
@@ -1432,7 +1637,7 @@ mod tests {
                 assert!(matches!(
                     condition,
                     Expr::Literal {
-                        value: Value::Bool(false)
+                        value: Literal::Bool(false)
                     }
                 ));
                 assert!(matches!(then_branch.as_ref(), Stmt::Print { .. }));
@@ -1456,7 +1661,7 @@ mod tests {
             make_token(TokenType::RightParen, ")", None),
             make_token(TokenType::LeftBrace, "{", None),
             make_token(TokenType::Print, "salve", None),
-            make_token(TokenType::Number, "1", Some(Value::Number(1.0))),
+            make_token(TokenType::Number, "1", Some(Literal::Number(1.0))),
             semi(),
             make_token(TokenType::RightBrace, "}", None),
             eof(),
@@ -1573,7 +1778,7 @@ mod tests {
             make_token(TokenType::True, "firmeza", None),
             make_token(TokenType::RightParen, ")", None),
             make_token(TokenType::Print, "salve", None),
-            make_token(TokenType::Number, "1", Some(Value::Number(1.0))),
+            make_token(TokenType::Number, "1", Some(Literal::Number(1.0))),
             semi(),
             eof(),
         ];
@@ -1587,7 +1792,7 @@ mod tests {
                 assert!(matches!(
                     condition,
                     Expr::Literal {
-                        value: Value::Bool(true)
+                        value: Literal::Bool(true)
                     }
                 ));
                 assert!(matches!(body.as_ref(), Stmt::Print { .. }));
@@ -1606,7 +1811,7 @@ mod tests {
             make_token(TokenType::RightParen, ")", None),
             make_token(TokenType::LeftBrace, "{", None),
             make_token(TokenType::Print, "salve", None),
-            make_token(TokenType::Number, "1", Some(Value::Number(1.0))),
+            make_token(TokenType::Number, "1", Some(Literal::Number(1.0))),
             semi(),
             make_token(TokenType::RightBrace, "}", None),
             eof(),
@@ -1634,17 +1839,17 @@ mod tests {
             make_token(TokenType::Var, "seLiga", None),
             make_token(TokenType::Identifier, "i", None),
             make_token(TokenType::Equal, "=", None),
-            make_token(TokenType::Number, "0", Some(Value::Number(0.0))),
+            make_token(TokenType::Number, "0", Some(Literal::Number(0.0))),
             semi(),
             make_token(TokenType::Identifier, "i", None),
             make_token(TokenType::Less, "<", None),
-            make_token(TokenType::Number, "3", Some(Value::Number(3.0))),
+            make_token(TokenType::Number, "3", Some(Literal::Number(3.0))),
             semi(),
             make_token(TokenType::Identifier, "i", None),
             make_token(TokenType::Equal, "=", None),
             make_token(TokenType::Identifier, "i", None),
             make_token(TokenType::Plus, "+", None),
-            make_token(TokenType::Number, "1", Some(Value::Number(1.0))),
+            make_token(TokenType::Number, "1", Some(Literal::Number(1.0))),
             make_token(TokenType::RightParen, ")", None),
             make_token(TokenType::Print, "salve", None),
             make_token(TokenType::Identifier, "i", None),
@@ -1674,13 +1879,13 @@ mod tests {
             semi(),
             make_token(TokenType::Identifier, "i", None),
             make_token(TokenType::Less, "<", None),
-            make_token(TokenType::Number, "3", Some(Value::Number(3.0))),
+            make_token(TokenType::Number, "3", Some(Literal::Number(3.0))),
             semi(),
             make_token(TokenType::Identifier, "i", None),
             make_token(TokenType::Equal, "=", None),
             make_token(TokenType::Identifier, "i", None),
             make_token(TokenType::Plus, "+", None),
-            make_token(TokenType::Number, "1", Some(Value::Number(1.0))),
+            make_token(TokenType::Number, "1", Some(Literal::Number(1.0))),
             make_token(TokenType::RightParen, ")", None),
             make_token(TokenType::Print, "salve", None),
             make_token(TokenType::Identifier, "i", None),
@@ -1704,14 +1909,14 @@ mod tests {
             make_token(TokenType::Var, "seLiga", None),
             make_token(TokenType::Identifier, "i", None),
             make_token(TokenType::Equal, "=", None),
-            make_token(TokenType::Number, "0", Some(Value::Number(0.0))),
+            make_token(TokenType::Number, "0", Some(Literal::Number(0.0))),
             semi(),
             semi(), // empty condition
             make_token(TokenType::Identifier, "i", None),
             make_token(TokenType::Equal, "=", None),
             make_token(TokenType::Identifier, "i", None),
             make_token(TokenType::Plus, "+", None),
-            make_token(TokenType::Number, "1", Some(Value::Number(1.0))),
+            make_token(TokenType::Number, "1", Some(Literal::Number(1.0))),
             make_token(TokenType::RightParen, ")", None),
             make_token(TokenType::Print, "salve", None),
             make_token(TokenType::Identifier, "i", None),
@@ -1730,7 +1935,7 @@ mod tests {
                         assert!(matches!(
                             condition,
                             Expr::Literal {
-                                value: Value::Bool(true)
+                                value: Literal::Bool(true)
                             }
                         ));
                     }
@@ -1750,17 +1955,17 @@ mod tests {
             make_token(TokenType::LeftParen, "(", None),
             make_token(TokenType::Identifier, "i", None),
             make_token(TokenType::Equal, "=", None),
-            make_token(TokenType::Number, "0", Some(Value::Number(0.0))),
+            make_token(TokenType::Number, "0", Some(Literal::Number(0.0))),
             semi(),
             make_token(TokenType::Identifier, "i", None),
             make_token(TokenType::Less, "<", None),
-            make_token(TokenType::Number, "3", Some(Value::Number(3.0))),
+            make_token(TokenType::Number, "3", Some(Literal::Number(3.0))),
             semi(),
             make_token(TokenType::Identifier, "i", None),
             make_token(TokenType::Equal, "=", None),
             make_token(TokenType::Identifier, "i", None),
             make_token(TokenType::Plus, "+", None),
-            make_token(TokenType::Number, "1", Some(Value::Number(1.0))),
+            make_token(TokenType::Number, "1", Some(Literal::Number(1.0))),
             make_token(TokenType::RightParen, ")", None),
             make_token(TokenType::Print, "salve", None),
             make_token(TokenType::Identifier, "i", None),
@@ -1874,7 +2079,7 @@ mod tests {
     fn make_token_at(
         token_type: TokenType,
         lexeme: &str,
-        literal: Option<Value>,
+        literal: Option<Literal>,
         start: usize,
     ) -> Token {
         Token {
@@ -1891,7 +2096,7 @@ mod tests {
         // 01234567
         let tokens = vec![
             make_token_at(TokenType::Print, "salve", None, 0),
-            make_token_at(TokenType::Number, "1", Some(Value::Number(1.0)), 6),
+            make_token_at(TokenType::Number, "1", Some(Literal::Number(1.0)), 6),
             make_token_at(TokenType::Semicolon, ";", None, 7),
             make_token_at(TokenType::Eof, "", None, 8),
         ];
@@ -1914,7 +2119,7 @@ mod tests {
             make_token_at(TokenType::Var, "seLiga", None, 0),
             make_token_at(TokenType::Identifier, "x", None, 7),
             make_token_at(TokenType::Equal, "=", None, 9),
-            make_token_at(TokenType::Number, "1", Some(Value::Number(1.0)), 11),
+            make_token_at(TokenType::Number, "1", Some(Literal::Number(1.0)), 11),
             make_token_at(TokenType::Semicolon, ";", None, 12),
             make_token_at(TokenType::Eof, "", None, 13),
         ];
@@ -1944,11 +2149,11 @@ mod tests {
             make_token_at(TokenType::True, "firmeza", None, 6),
             make_token_at(TokenType::RightParen, ")", None, 13),
             make_token_at(TokenType::Print, "salve", None, 19),
-            make_token_at(TokenType::Number, "1", Some(Value::Number(1.0)), 25),
+            make_token_at(TokenType::Number, "1", Some(Literal::Number(1.0)), 25),
             make_token_at(TokenType::Semicolon, ";", None, 26),
             make_token_at(TokenType::Else, "vacilou", None, 28),
             make_token_at(TokenType::Print, "salve", None, 40),
-            make_token_at(TokenType::Number, "2", Some(Value::Number(2.0)), 46),
+            make_token_at(TokenType::Number, "2", Some(Literal::Number(2.0)), 46),
             make_token_at(TokenType::Semicolon, ";", None, 47),
             make_token_at(TokenType::Eof, "", None, 48),
         ];
@@ -1984,11 +2189,11 @@ mod tests {
             make_token_at(TokenType::True, "firmeza", None, 6),
             make_token_at(TokenType::RightParen, ")", None, 13),
             make_token_at(TokenType::Print, "salve", None, 19),
-            make_token_at(TokenType::Number, "1", Some(Value::Number(1.0)), 25),
+            make_token_at(TokenType::Number, "1", Some(Literal::Number(1.0)), 25),
             make_token_at(TokenType::Semicolon, ";", None, 26),
             make_token_at(TokenType::Else, "vacilou", None, 28),
             make_token_at(TokenType::Print, "salve", None, 40),
-            make_token_at(TokenType::Number, "2", Some(Value::Number(2.0)), 46),
+            make_token_at(TokenType::Number, "2", Some(Literal::Number(2.0)), 46),
             make_token_at(TokenType::Semicolon, ";", None, 47),
             make_token_at(TokenType::Eof, "", None, 48),
         ];
@@ -2021,7 +2226,7 @@ mod tests {
             make_token_at(TokenType::True, "firmeza", None, 13),
             make_token_at(TokenType::RightParen, ")", None, 20),
             make_token_at(TokenType::Print, "salve", None, 26),
-            make_token_at(TokenType::Number, "1", Some(Value::Number(1.0)), 32),
+            make_token_at(TokenType::Number, "1", Some(Literal::Number(1.0)), 32),
             make_token_at(TokenType::Semicolon, ";", None, 33),
             make_token_at(TokenType::Eof, "", None, 34),
         ];
@@ -2047,7 +2252,7 @@ mod tests {
         let tokens = vec![
             make_token_at(TokenType::LeftBrace, "{", None, 0),
             make_token_at(TokenType::Print, "salve", None, 6),
-            make_token_at(TokenType::Number, "1", Some(Value::Number(1.0)), 12),
+            make_token_at(TokenType::Number, "1", Some(Literal::Number(1.0)), 12),
             make_token_at(TokenType::Semicolon, ";", None, 13),
             make_token_at(TokenType::RightBrace, "}", None, 15),
             make_token_at(TokenType::Eof, "", None, 16),
@@ -2076,17 +2281,17 @@ mod tests {
             make_token_at(TokenType::Var, "seLiga", None, 8),
             make_token_at(TokenType::Identifier, "i", None, 15),
             make_token_at(TokenType::Equal, "=", None, 17),
-            make_token_at(TokenType::Number, "0", Some(Value::Number(0.0)), 19),
+            make_token_at(TokenType::Number, "0", Some(Literal::Number(0.0)), 19),
             make_token_at(TokenType::Semicolon, ";", None, 20),
             make_token_at(TokenType::Identifier, "i", None, 22),
             make_token_at(TokenType::Less, "<", None, 24),
-            make_token_at(TokenType::Number, "3", Some(Value::Number(3.0)), 26),
+            make_token_at(TokenType::Number, "3", Some(Literal::Number(3.0)), 26),
             make_token_at(TokenType::Semicolon, ";", None, 27),
             make_token_at(TokenType::Identifier, "i", None, 29),
             make_token_at(TokenType::Equal, "=", None, 31),
             make_token_at(TokenType::Identifier, "i", None, 33),
             make_token_at(TokenType::Plus, "+", None, 35),
-            make_token_at(TokenType::Number, "1", Some(Value::Number(1.0)), 37),
+            make_token_at(TokenType::Number, "1", Some(Literal::Number(1.0)), 37),
             make_token_at(TokenType::RightParen, ")", None, 38),
             make_token_at(TokenType::Print, "salve", None, 44),
             make_token_at(TokenType::Identifier, "i", None, 50),
@@ -2103,5 +2308,392 @@ mod tests {
             }
             _ => panic!("expected block statement (desugared for)"),
         }
+    }
+
+    // === function calls ===
+
+    #[test]
+    fn parses_function_call_no_arguments() {
+        // fazTeuCorre();
+        let tokens = vec![
+            make_token(TokenType::Identifier, "fazTeuCorre", None),
+            make_token(TokenType::LeftParen, "(", None),
+            make_token(TokenType::RightParen, ")", None),
+            semi(),
+            eof(),
+        ];
+        let mut parser = Parser::new(tokens);
+        let stmts = parser.parse().unwrap();
+        assert_eq!(stmts.len(), 1);
+        match &stmts[0] {
+            Stmt::Expression { expression, .. } => {
+                assert!(matches!(expression, Expr::Call { arguments, .. } if arguments.is_empty()));
+            }
+            _ => panic!("expected expression statement"),
+        }
+    }
+
+    #[test]
+    fn parses_function_call_with_arguments() {
+        // soma(1, 2);
+        let tokens = vec![
+            make_token(TokenType::Identifier, "soma", None),
+            make_token(TokenType::LeftParen, "(", None),
+            make_token(TokenType::Number, "1", Some(Literal::Number(1.0))),
+            make_token(TokenType::Comma, ",", None),
+            make_token(TokenType::Number, "2", Some(Literal::Number(2.0))),
+            make_token(TokenType::RightParen, ")", None),
+            semi(),
+            eof(),
+        ];
+        let mut parser = Parser::new(tokens);
+        let stmts = parser.parse().unwrap();
+        assert_eq!(stmts.len(), 1);
+        match &stmts[0] {
+            Stmt::Expression { expression, .. } => {
+                assert!(matches!(expression, Expr::Call { arguments, .. } if arguments.len() == 2));
+            }
+            _ => panic!("expected expression statement"),
+        }
+    }
+
+    #[test]
+    fn parses_chained_function_calls() {
+        // getCallback()();
+        let tokens = vec![
+            make_token(TokenType::Identifier, "getCallback", None),
+            make_token(TokenType::LeftParen, "(", None),
+            make_token(TokenType::RightParen, ")", None),
+            make_token(TokenType::LeftParen, "(", None),
+            make_token(TokenType::RightParen, ")", None),
+            semi(),
+            eof(),
+        ];
+        let mut parser = Parser::new(tokens);
+        let stmts = parser.parse().unwrap();
+        assert_eq!(stmts.len(), 1);
+        match &stmts[0] {
+            Stmt::Expression { expression, .. } => {
+                // Outer call
+                match expression {
+                    Expr::Call { callee, .. } => {
+                        // Inner call
+                        assert!(matches!(callee.as_ref(), Expr::Call { .. }));
+                    }
+                    _ => panic!("expected Call expression"),
+                }
+            }
+            _ => panic!("expected expression statement"),
+        }
+    }
+
+    #[test]
+    fn error_on_unclosed_function_call() {
+        // fazTeuCorre(;
+        let tokens = vec![
+            make_token(TokenType::Identifier, "fazTeuCorre", None),
+            make_token(TokenType::LeftParen, "(", None),
+            semi(),
+            eof(),
+        ];
+        let mut parser = Parser::new(tokens);
+        parser.parse().unwrap();
+        let errors = parser.take_errors();
+        assert_eq!(errors.len(), 1);
+        assert!(matches!(&errors[0], ManoError::Parse { .. }));
+    }
+
+    // === function declarations ===
+
+    #[test]
+    fn parses_function_declaration_no_params() {
+        // olhaEssaFita cumprimentar() { salve 42; }
+        let tokens = vec![
+            make_token(TokenType::Fun, "olhaEssaFita", None),
+            make_token(TokenType::Identifier, "cumprimentar", None),
+            make_token(TokenType::LeftParen, "(", None),
+            make_token(TokenType::RightParen, ")", None),
+            make_token(TokenType::LeftBrace, "{", None),
+            make_token(TokenType::Print, "salve", None),
+            make_token(TokenType::Number, "42", Some(Literal::Number(42.0))),
+            semi(),
+            make_token(TokenType::RightBrace, "}", None),
+            eof(),
+        ];
+        let mut parser = Parser::new(tokens);
+        let stmts = parser.parse().unwrap();
+        assert_eq!(stmts.len(), 1);
+        match &stmts[0] {
+            Stmt::Function {
+                name, params, body, ..
+            } => {
+                assert_eq!(name.lexeme, "cumprimentar");
+                assert!(params.is_empty());
+                assert_eq!(body.len(), 1);
+            }
+            _ => panic!("expected Function statement"),
+        }
+    }
+
+    #[test]
+    fn parses_function_declaration_with_params() {
+        // olhaEssaFita soma(a, b) { salve a; }
+        let tokens = vec![
+            make_token(TokenType::Fun, "olhaEssaFita", None),
+            make_token(TokenType::Identifier, "soma", None),
+            make_token(TokenType::LeftParen, "(", None),
+            make_token(TokenType::Identifier, "a", None),
+            make_token(TokenType::Comma, ",", None),
+            make_token(TokenType::Identifier, "b", None),
+            make_token(TokenType::RightParen, ")", None),
+            make_token(TokenType::LeftBrace, "{", None),
+            make_token(TokenType::Print, "salve", None),
+            make_token(TokenType::Identifier, "a", None),
+            semi(),
+            make_token(TokenType::RightBrace, "}", None),
+            eof(),
+        ];
+        let mut parser = Parser::new(tokens);
+        let stmts = parser.parse().unwrap();
+        assert_eq!(stmts.len(), 1);
+        match &stmts[0] {
+            Stmt::Function {
+                name, params, body, ..
+            } => {
+                assert_eq!(name.lexeme, "soma");
+                assert_eq!(params.len(), 2);
+                assert_eq!(params[0].lexeme, "a");
+                assert_eq!(params[1].lexeme, "b");
+                assert_eq!(body.len(), 1);
+            }
+            _ => panic!("expected Function statement"),
+        }
+    }
+
+    #[test]
+    fn error_on_function_missing_name() {
+        // olhaEssaFita () {}
+        let tokens = vec![
+            make_token(TokenType::Fun, "olhaEssaFita", None),
+            make_token(TokenType::LeftParen, "(", None),
+            make_token(TokenType::RightParen, ")", None),
+            make_token(TokenType::LeftBrace, "{", None),
+            make_token(TokenType::RightBrace, "}", None),
+            eof(),
+        ];
+        let mut parser = Parser::new(tokens);
+        parser.parse().unwrap();
+        let errors = parser.take_errors();
+        assert_eq!(errors.len(), 1);
+        assert!(matches!(&errors[0], ManoError::Parse { .. }));
+    }
+
+    #[test]
+    fn error_on_too_many_parameters() {
+        // olhaEssaFita muitoParam(p0, p1, ..., p255) {}
+        let mut tokens = vec![
+            make_token(TokenType::Fun, "olhaEssaFita", None),
+            make_token(TokenType::Identifier, "muitoParam", None),
+            make_token(TokenType::LeftParen, "(", None),
+        ];
+        for i in 0..256 {
+            tokens.push(make_token(TokenType::Identifier, &format!("p{}", i), None));
+            if i < 255 {
+                tokens.push(make_token(TokenType::Comma, ",", None));
+            }
+        }
+        tokens.push(make_token(TokenType::RightParen, ")", None));
+        tokens.push(make_token(TokenType::LeftBrace, "{", None));
+        tokens.push(make_token(TokenType::RightBrace, "}", None));
+        tokens.push(eof());
+
+        let mut parser = Parser::new(tokens);
+        parser.parse().unwrap();
+        let errors = parser.take_errors();
+        assert_eq!(errors.len(), 1);
+        assert!(matches!(&errors[0], ManoError::Parse { .. }));
+    }
+
+    #[test]
+    fn error_on_too_many_arguments() {
+        // func(a0, a1, ..., a255);
+        let mut tokens = vec![
+            make_token(TokenType::Identifier, "func", None),
+            make_token(TokenType::LeftParen, "(", None),
+        ];
+        for i in 0..256 {
+            tokens.push(make_token(
+                TokenType::Number,
+                &format!("{}", i),
+                Some(Literal::Number(i as f64)),
+            ));
+            if i < 255 {
+                tokens.push(make_token(TokenType::Comma, ",", None));
+            }
+        }
+        tokens.push(make_token(TokenType::RightParen, ")", None));
+        tokens.push(semi());
+        tokens.push(eof());
+
+        let mut parser = Parser::new(tokens);
+        parser.parse().unwrap();
+        let errors = parser.take_errors();
+        assert_eq!(errors.len(), 1);
+        assert!(matches!(&errors[0], ManoError::Parse { .. }));
+    }
+
+    // === return statements ===
+
+    #[test]
+    fn parses_return_without_value() {
+        // toma;
+        let tokens = vec![make_token(TokenType::Return, "toma", None), semi(), eof()];
+        let mut parser = Parser::new(tokens);
+        let stmts = parser.parse().unwrap();
+        assert!(matches!(&stmts[0], Stmt::Return { value: None, .. }));
+    }
+
+    #[test]
+    fn parses_return_with_value() {
+        // toma 42;
+        let tokens = vec![
+            make_token(TokenType::Return, "toma", None),
+            make_token(TokenType::Number, "42", Some(Literal::Number(42.0))),
+            semi(),
+            eof(),
+        ];
+        let mut parser = Parser::new(tokens);
+        let stmts = parser.parse().unwrap();
+        assert!(matches!(&stmts[0], Stmt::Return { value: Some(_), .. }));
+    }
+
+    // === lambda expressions ===
+
+    #[test]
+    fn parses_lambda_no_params() {
+        // olhaEssaFita () { salve 1; };
+        let tokens = vec![
+            make_token(TokenType::Fun, "olhaEssaFita", None),
+            make_token(TokenType::LeftParen, "(", None),
+            make_token(TokenType::RightParen, ")", None),
+            make_token(TokenType::LeftBrace, "{", None),
+            make_token(TokenType::Print, "salve", None),
+            make_token(TokenType::Number, "1", Some(Literal::Number(1.0))),
+            semi(),
+            make_token(TokenType::RightBrace, "}", None),
+            semi(),
+            eof(),
+        ];
+        let mut parser = Parser::new(tokens);
+        let stmts = parser.parse().unwrap();
+        assert_eq!(stmts.len(), 1);
+        match &stmts[0] {
+            Stmt::Expression { expression, .. } => {
+                assert!(matches!(expression, Expr::Lambda { params, .. } if params.is_empty()));
+            }
+            _ => panic!("expected expression statement with lambda"),
+        }
+    }
+
+    #[test]
+    fn parses_lambda_with_params() {
+        // olhaEssaFita (a, b) { toma a + b; };
+        let tokens = vec![
+            make_token(TokenType::Fun, "olhaEssaFita", None),
+            make_token(TokenType::LeftParen, "(", None),
+            make_token(TokenType::Identifier, "a", None),
+            make_token(TokenType::Comma, ",", None),
+            make_token(TokenType::Identifier, "b", None),
+            make_token(TokenType::RightParen, ")", None),
+            make_token(TokenType::LeftBrace, "{", None),
+            make_token(TokenType::Return, "toma", None),
+            make_token(TokenType::Identifier, "a", None),
+            make_token(TokenType::Plus, "+", None),
+            make_token(TokenType::Identifier, "b", None),
+            semi(),
+            make_token(TokenType::RightBrace, "}", None),
+            semi(),
+            eof(),
+        ];
+        let mut parser = Parser::new(tokens);
+        let stmts = parser.parse().unwrap();
+        assert_eq!(stmts.len(), 1);
+        match &stmts[0] {
+            Stmt::Expression { expression, .. } => {
+                assert!(matches!(expression, Expr::Lambda { params, .. } if params.len() == 2));
+            }
+            _ => panic!("expected expression statement with lambda"),
+        }
+    }
+
+    #[test]
+    fn parses_lambda_passed_as_argument() {
+        // thrice(olhaEssaFita (a) { salve a; });
+        let tokens = vec![
+            make_token(TokenType::Identifier, "thrice", None),
+            make_token(TokenType::LeftParen, "(", None),
+            make_token(TokenType::Fun, "olhaEssaFita", None),
+            make_token(TokenType::LeftParen, "(", None),
+            make_token(TokenType::Identifier, "a", None),
+            make_token(TokenType::RightParen, ")", None),
+            make_token(TokenType::LeftBrace, "{", None),
+            make_token(TokenType::Print, "salve", None),
+            make_token(TokenType::Identifier, "a", None),
+            semi(),
+            make_token(TokenType::RightBrace, "}", None),
+            make_token(TokenType::RightParen, ")", None),
+            semi(),
+            eof(),
+        ];
+        let mut parser = Parser::new(tokens);
+        let stmts = parser.parse().unwrap();
+        assert_eq!(stmts.len(), 1);
+        match &stmts[0] {
+            Stmt::Expression { expression, .. } => match expression {
+                Expr::Call { arguments, .. } => {
+                    assert_eq!(arguments.len(), 1);
+                    assert!(matches!(&arguments[0], Expr::Lambda { .. }));
+                }
+                _ => panic!("expected Call expression"),
+            },
+            _ => panic!("expected expression statement"),
+        }
+    }
+
+    #[test]
+    fn peek_next_returns_none_at_end() {
+        let tokens = vec![eof()];
+        let parser = Parser::new(tokens);
+        // At position 0 with only EOF, peek_next should return None
+        assert!(parser.peek_next().is_none());
+    }
+
+    #[test]
+    fn error_on_lambda_with_too_many_parameters() {
+        // seLiga x = olhaEssaFita (p0, p1, ..., p255) { };
+        let mut tokens = vec![
+            make_token(TokenType::Var, "seLiga", None),
+            make_token(TokenType::Identifier, "x", None),
+            make_token(TokenType::Equal, "=", None),
+            make_token(TokenType::Fun, "olhaEssaFita", None),
+            make_token(TokenType::LeftParen, "(", None),
+        ];
+        for i in 0..256 {
+            tokens.push(make_token(TokenType::Identifier, &format!("p{}", i), None));
+            if i < 255 {
+                tokens.push(make_token(TokenType::Comma, ",", None));
+            }
+        }
+        tokens.push(make_token(TokenType::RightParen, ")", None));
+        tokens.push(make_token(TokenType::LeftBrace, "{", None));
+        tokens.push(make_token(TokenType::RightBrace, "}", None));
+        tokens.push(semi());
+        tokens.push(eof());
+
+        let mut parser = Parser::new(tokens);
+        parser.parse().unwrap();
+        let errors = parser.take_errors();
+        assert_eq!(errors.len(), 1);
+        assert!(matches!(&errors[0], ManoError::Parse { message, .. } if message.contains("255")));
     }
 }

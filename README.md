@@ -73,8 +73,8 @@ oiSumida 🔥;
 | `while` | `segueOFluxo` | "follow the flow" | ✅ |
 | `for` | `seVira` | "figure it out" | ✅ |
 | `break` | `saiFora` | "get out" | ✅ |
-| `fun` | `olhaEssaFita` | "check out this story" | 🔜 |
-| `return` | `toma` | "take it!" | 🔜 |
+| `fun` | `olhaEssaFita` | "check out this story" | ✅ |
+| `return` | `toma` | "take it!" | ✅ |
 | `class` | `bagulho` | "thing/stuff" | 🔜 |
 | `this` | `oCara` | "the dude" | 🔜 |
 | `super` | `mestre` | "master" | 🔜 |
@@ -139,6 +139,7 @@ mano implements several [Crafting Interpreters challenges](https://craftinginter
 | `,` comma | Expression sequencing (returns rightmost) |
 | `/* */` nested | Block comments can nest |
 | `saiFora` break | Exit loops early |
+| Lambda expressions | Anonymous functions: `olhaEssaFita (x) { toma x * 2; }` |
 | Unicode identifiers | Including emoji: `seLiga 🔥 = 42` |
 | `oiSumida` alias | Second print keyword for variety |
 | Source spans | All tokens/AST nodes track position for errors and LSP |

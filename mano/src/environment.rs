@@ -4,8 +4,9 @@ use std::ops::Range;
 use std::rc::Rc;
 
 use crate::error::ManoError;
-use crate::token::Value;
+use crate::value::Value;
 
+#[derive(Debug, Default)]
 pub struct Environment {
     values: HashMap<String, Option<Value>>,
     enclosing: Option<Rc<RefCell<Environment>>>,
@@ -13,10 +14,7 @@ pub struct Environment {
 
 impl Environment {
     pub fn new() -> Self {
-        Self {
-            values: HashMap::new(),
-            enclosing: None,
-        }
+        Self::default()
     }
 
     pub fn with_enclosing(enclosing: Rc<RefCell<Environment>>) -> Self {
@@ -97,13 +95,22 @@ impl Environment {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::token::Literal;
+
+    fn num(n: f64) -> Value {
+        Value::Literal(Literal::Number(n))
+    }
+
+    fn str(s: &str) -> Value {
+        Value::Literal(Literal::String(s.to_string()))
+    }
 
     #[test]
     fn define_and_get_variable() {
         let mut env = Environment::new();
-        env.define("x".to_string(), Value::Number(42.0));
+        env.define("x".to_string(), num(42.0));
         let result = env.get("x", 0..1).unwrap();
-        assert_eq!(result, Value::Number(42.0));
+        assert_eq!(result, num(42.0));
     }
 
     #[test]
@@ -116,16 +123,16 @@ mod tests {
     #[test]
     fn assign_updates_existing_variable() {
         let mut env = Environment::new();
-        env.define("x".to_string(), Value::Number(1.0));
-        env.assign("x", Value::Number(42.0), 0..1).unwrap();
+        env.define("x".to_string(), num(1.0));
+        env.assign("x", num(42.0), 0..1).unwrap();
         let result = env.get("x", 0..1).unwrap();
-        assert_eq!(result, Value::Number(42.0));
+        assert_eq!(result, num(42.0));
     }
 
     #[test]
     fn assign_undefined_variable_returns_error() {
         let mut env = Environment::new();
-        let result = env.assign("x", Value::Number(42.0), 0..1);
+        let result = env.assign("x", num(42.0), 0..1);
         assert!(matches!(result, Err(ManoError::Runtime { .. })));
     }
 
@@ -134,42 +141,36 @@ mod tests {
     #[test]
     fn get_from_enclosing_scope() {
         let outer = Rc::new(RefCell::new(Environment::new()));
-        outer
-            .borrow_mut()
-            .define("x".to_string(), Value::Number(42.0));
+        outer.borrow_mut().define("x".to_string(), num(42.0));
 
         let inner = Environment::with_enclosing(Rc::clone(&outer));
         let result = inner.get("x", 0..1).unwrap();
-        assert_eq!(result, Value::Number(42.0));
+        assert_eq!(result, num(42.0));
     }
 
     #[test]
     fn inner_shadows_outer() {
         let outer = Rc::new(RefCell::new(Environment::new()));
-        outer
-            .borrow_mut()
-            .define("x".to_string(), Value::Number(1.0));
+        outer.borrow_mut().define("x".to_string(), num(1.0));
 
         let mut inner = Environment::with_enclosing(Rc::clone(&outer));
-        inner.define("x".to_string(), Value::Number(99.0));
+        inner.define("x".to_string(), num(99.0));
 
         let result = inner.get("x", 0..1).unwrap();
-        assert_eq!(result, Value::Number(99.0));
+        assert_eq!(result, num(99.0));
     }
 
     #[test]
     fn assign_updates_enclosing_scope() {
         let outer = Rc::new(RefCell::new(Environment::new()));
-        outer
-            .borrow_mut()
-            .define("x".to_string(), Value::Number(1.0));
+        outer.borrow_mut().define("x".to_string(), num(1.0));
 
         let mut inner = Environment::with_enclosing(Rc::clone(&outer));
-        inner.assign("x", Value::Number(42.0), 0..1).unwrap();
+        inner.assign("x", num(42.0), 0..1).unwrap();
 
         // Check outer was updated
         let result = outer.borrow().get("x", 0..1).unwrap();
-        assert_eq!(result, Value::Number(42.0));
+        assert_eq!(result, num(42.0));
     }
 
     #[test]
@@ -184,16 +185,16 @@ mod tests {
     fn assign_initializes_uninitialized_variable() {
         let mut env = Environment::new();
         env.define_uninitialized("x".to_string());
-        env.assign("x", Value::Number(42.0), 0..1).unwrap();
+        env.assign("x", num(42.0), 0..1).unwrap();
         let result = env.get("x", 0..1).unwrap();
-        assert_eq!(result, Value::Number(42.0));
+        assert_eq!(result, num(42.0));
     }
 
     #[test]
     fn variable_names_returns_all_defined_names() {
         let mut env = Environment::new();
-        env.define("x".to_string(), Value::Number(1.0));
-        env.define("nome".to_string(), Value::String("mano".to_string()));
+        env.define("x".to_string(), num(1.0));
+        env.define("nome".to_string(), str("mano"));
         env.define_uninitialized("vazio".to_string());
 
         let names = env.variable_names();
@@ -206,12 +207,10 @@ mod tests {
     #[test]
     fn variable_names_includes_enclosing_scopes() {
         let outer = Rc::new(RefCell::new(Environment::new()));
-        outer
-            .borrow_mut()
-            .define("outer_var".to_string(), Value::Number(1.0));
+        outer.borrow_mut().define("outer_var".to_string(), num(1.0));
 
         let mut inner = Environment::with_enclosing(Rc::clone(&outer));
-        inner.define("inner_var".to_string(), Value::Number(2.0));
+        inner.define("inner_var".to_string(), num(2.0));
 
         let names = inner.variable_names();
         assert!(names.contains(&"outer_var".to_string()));

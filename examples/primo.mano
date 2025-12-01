@@ -1,23 +1,29 @@
 // Verifica se um número é primo
 
-seLiga n = 97;
-seLiga éPrimo = firmeza;
+olhaEssaFita éPrimo(n) {
+    sePá (n < 2) toma treta;
 
-sePá (n < 2) {
-    éPrimo = treta;
-} vacilou {
     seLiga divisor = 2;
     segueOFluxo (divisor * divisor <= n) {
-        sePá (n % divisor == 0) {
-            éPrimo = treta;
-            saiFora;
-        }
+        sePá (n % divisor == 0) toma treta;
         divisor = divisor + 1;
+    }
+
+    toma firmeza;
+}
+
+olhaEssaFita verificaPrimo(n) {
+    sePá (éPrimo(n)) {
+        salve n;
+        salve "é primo!";
+    } vacilou {
+        salve n;
+        salve "não é primo.";
     }
 }
 
-salve n;
-sePá (éPrimo)
-    salve "é primo!";
-vacilou
-    salve "não é primo.";
+verificaPrimo(2);
+verificaPrimo(17);
+verificaPrimo(97);
+verificaPrimo(100);
+verificaPrimo(7919);

@@ -16,7 +16,9 @@ use lsp_types::{
         PrepareRenameRequest, References, Rename, Request as _,
     },
 };
-use mano::{KEYWORDS, ManoError, Parser, Scanner, Stmt, TokenType, is_identifier_char};
+use mano::{
+    KEYWORDS, ManoError, NATIVE_FUNCTIONS, Parser, Scanner, Stmt, TokenType, is_identifier_char,
+};
 
 fn main() -> Result<(), Box<dyn Error + Sync + Send>> {
     eprintln!("mano-lsp starting...");
@@ -322,6 +324,30 @@ fn get_completions(source: &str, prefix: &str) -> Vec<CompletionItem> {
         }
     }
 
+    // Add native functions
+    for func in NATIVE_FUNCTIONS {
+        if func.starts_with(prefix) {
+            completions.push(CompletionItem {
+                label: func.to_string(),
+                kind: Some(CompletionItemKind::FUNCTION),
+                ..Default::default()
+            });
+        }
+    }
+
+    // Add user-defined functions from parsed AST (with params in detail)
+    for (name, params, _) in extract_function_info(source) {
+        if name.starts_with(prefix) {
+            let params_str = format!("({})", params.join(", "));
+            completions.push(CompletionItem {
+                label: name,
+                kind: Some(CompletionItemKind::FUNCTION),
+                detail: Some(params_str),
+                ..Default::default()
+            });
+        }
+    }
+
     // Add variables from parsed AST
     for var in extract_variables(source) {
         if var.starts_with(prefix) {
@@ -368,10 +394,56 @@ fn collect_variable_declarations(
     }
 }
 
+fn extract_function_declarations(source: &str) -> Vec<(String, std::ops::Range<usize>)> {
+    extract_function_info(source)
+        .into_iter()
+        .map(|(name, _, span)| (name, span))
+        .collect()
+}
+
+/// Returns (name, params, span) for each function declaration
+fn extract_function_info(source: &str) -> Vec<(String, Vec<String>, std::ops::Range<usize>)> {
+    let scanner = Scanner::new(source);
+    let tokens: Vec<_> = scanner.filter_map(|r| r.ok()).collect();
+    let mut parser = Parser::new(tokens);
+    let statements = parser.parse().unwrap_or_default();
+
+    let mut declarations = Vec::new();
+    collect_function_info(&statements, &mut declarations);
+    declarations
+}
+
+fn collect_function_info(
+    statements: &[Stmt],
+    declarations: &mut Vec<(String, Vec<String>, std::ops::Range<usize>)>,
+) {
+    for stmt in statements {
+        if let Some((name, params, body)) = stmt.function_declaration() {
+            let param_names: Vec<String> = params.iter().map(|t| t.lexeme.clone()).collect();
+            declarations.push((name.lexeme.clone(), param_names, name.span.clone()));
+            // Also collect nested functions
+            collect_function_info(body, declarations);
+        }
+        for child in stmt.children() {
+            collect_function_info(std::slice::from_ref(child), declarations);
+        }
+    }
+}
+
 fn find_definition(source: &str, position: Position) -> Option<Range> {
     let word = get_word_at_position(source, position)?;
 
+    // Check variable declarations
     for (name, span) in extract_variable_declarations(source) {
+        if name == word {
+            let start = byte_offset_to_position(source, span.start);
+            let end = byte_offset_to_position(source, span.end);
+            return Some(Range { start, end });
+        }
+    }
+
+    // Check function declarations
+    for (name, span) in extract_function_declarations(source) {
         if name == word {
             let start = byte_offset_to_position(source, span.start);
             let end = byte_offset_to_position(source, span.end);
@@ -467,9 +539,13 @@ fn collect_folding_ranges(statements: &[Stmt], source: &str, ranges: &mut Vec<Fo
 fn prepare_rename(source: &str, position: Position) -> Option<Range> {
     let word = get_word_at_position(source, position)?;
 
-    // Check if it's a declared variable (not a keyword)
-    let declarations = extract_variable_declarations(source);
-    if !declarations.iter().any(|(name, _)| name == &word) {
+    // Check if it's a declared variable or function (not a keyword)
+    let var_declarations = extract_variable_declarations(source);
+    let func_declarations = extract_function_declarations(source);
+    let is_variable = var_declarations.iter().any(|(name, _)| name == &word);
+    let is_function = func_declarations.iter().any(|(name, _)| name == &word);
+
+    if !is_variable && !is_function {
         return None;
     }
 
@@ -500,10 +576,13 @@ fn find_references(source: &str, position: Position, uri: Uri) -> Vec<Location> 
         None => return vec![],
     };
 
-    // Check if this word is a declared variable
-    let declarations = extract_variable_declarations(source);
-    let is_variable = declarations.iter().any(|(name, _)| name == &word);
-    if !is_variable {
+    // Check if this word is a declared variable or function
+    let var_declarations = extract_variable_declarations(source);
+    let func_declarations = extract_function_declarations(source);
+    let is_variable = var_declarations.iter().any(|(name, _)| name == &word);
+    let is_function = func_declarations.iter().any(|(name, _)| name == &word);
+
+    if !is_variable && !is_function {
         return vec![];
     }
 
@@ -525,24 +604,43 @@ fn find_references(source: &str, position: Position, uri: Uri) -> Vec<Location> 
 
 #[allow(deprecated)] // SymbolInformation is deprecated but DocumentSymbol requires hierarchy
 fn get_document_symbols(source: &str, uri: Uri) -> Vec<SymbolInformation> {
-    extract_variable_declarations(source)
-        .into_iter()
-        .map(|(name, span)| {
-            let start = byte_offset_to_position(source, span.start);
-            let end = byte_offset_to_position(source, span.end);
-            SymbolInformation {
-                name,
-                kind: SymbolKind::VARIABLE,
-                location: Location {
-                    uri: uri.clone(),
-                    range: Range { start, end },
-                },
-                tags: None,
-                deprecated: None,
-                container_name: None,
-            }
-        })
-        .collect()
+    let mut symbols: Vec<SymbolInformation> = Vec::new();
+
+    // Add variable symbols
+    for (name, span) in extract_variable_declarations(source) {
+        let start = byte_offset_to_position(source, span.start);
+        let end = byte_offset_to_position(source, span.end);
+        symbols.push(SymbolInformation {
+            name,
+            kind: SymbolKind::VARIABLE,
+            location: Location {
+                uri: uri.clone(),
+                range: Range { start, end },
+            },
+            tags: None,
+            deprecated: None,
+            container_name: None,
+        });
+    }
+
+    // Add function symbols
+    for (name, span) in extract_function_declarations(source) {
+        let start = byte_offset_to_position(source, span.start);
+        let end = byte_offset_to_position(source, span.end);
+        symbols.push(SymbolInformation {
+            name,
+            kind: SymbolKind::FUNCTION,
+            location: Location {
+                uri: uri.clone(),
+                range: Range { start, end },
+            },
+            tags: None,
+            deprecated: None,
+            container_name: None,
+        });
+    }
+
+    symbols
 }
 
 fn create_hover_response(source: &str, position: Position) -> Option<Hover> {
@@ -563,6 +661,14 @@ fn get_hover(source: &str, position: Position) -> Option<String> {
     for (keyword, _token_type) in KEYWORDS {
         if *keyword == word {
             return Some(format!("`{}` (keyword)", keyword));
+        }
+    }
+
+    // Check if it's a function (with parameters)
+    for (name, params, _span) in extract_function_info(source) {
+        if name == word {
+            let params_str = params.join(", ");
+            return Some(format!("`{}({})` (function)", name, params_str));
         }
     }
 
@@ -685,6 +791,22 @@ mod tests {
         let completions = get_completions("", "");
         let salve = completions.iter().find(|c| c.label == "salve").unwrap();
         assert_eq!(salve.kind, Some(lsp_types::CompletionItemKind::KEYWORD));
+    }
+
+    #[test]
+    fn get_completions_includes_native_functions() {
+        let completions = get_completions("", "faz");
+        assert!(completions.iter().any(|c| c.label == "fazTeuCorre"));
+    }
+
+    #[test]
+    fn native_function_has_function_kind() {
+        let completions = get_completions("", "");
+        let faz = completions
+            .iter()
+            .find(|c| c.label == "fazTeuCorre")
+            .unwrap();
+        assert_eq!(faz.kind, Some(lsp_types::CompletionItemKind::FUNCTION));
     }
 
     #[test]
@@ -938,6 +1060,21 @@ mod tests {
     }
 
     #[test]
+    fn prepare_rename_works_with_function() {
+        let source = "olhaEssaFita foo() { salve 1; }\nfoo();";
+        let result = prepare_rename(source, Position::new(1, 0));
+        assert!(result.is_some(), "Should be able to rename function");
+    }
+
+    #[test]
+    fn get_rename_edits_renames_function() {
+        let source = "olhaEssaFita foo() { salve 1; }\nfoo();";
+        let result = get_rename_edits(source, Position::new(0, 13), "bar", test_uri());
+        assert_eq!(result.len(), 2, "Should rename declaration and call");
+        assert!(result.iter().all(|edit| edit.new_text == "bar"));
+    }
+
+    #[test]
     fn get_rename_edits_returns_empty_for_non_variable() {
         let result = get_rename_edits("salve 42;", Position::new(0, 0), "bar", test_uri());
         assert!(result.is_empty());
@@ -1068,5 +1205,107 @@ mod tests {
         let source = "   ";
         let result = find_references(source, Position::new(0, 1), test_uri()); // in spaces
         assert!(result.is_empty());
+    }
+
+    // === function support tests ===
+
+    #[test]
+    fn get_document_symbols_returns_function_symbol() {
+        let source = "olhaEssaFita soma(a, b) { toma a + b; }";
+        let result = get_document_symbols(source, test_uri());
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].name, "soma");
+        assert_eq!(result[0].kind, SymbolKind::FUNCTION);
+    }
+
+    #[test]
+    fn get_document_symbols_returns_both_functions_and_variables() {
+        let source = "seLiga x = 1;\nolhaEssaFita foo() { salve x; }";
+        let result = get_document_symbols(source, test_uri());
+        assert_eq!(result.len(), 2);
+        assert!(
+            result
+                .iter()
+                .any(|s| s.name == "x" && s.kind == SymbolKind::VARIABLE)
+        );
+        assert!(
+            result
+                .iter()
+                .any(|s| s.name == "foo" && s.kind == SymbolKind::FUNCTION)
+        );
+    }
+
+    #[test]
+    fn find_definition_finds_function_declaration() {
+        let source = "olhaEssaFita foo() { salve 1; }\nfoo();";
+        let result = find_definition(source, Position::new(1, 0)); // on "foo" call
+        assert!(result.is_some());
+        assert_eq!(result.unwrap().start.line, 0);
+    }
+
+    #[test]
+    fn find_references_finds_function_usages() {
+        let source = "olhaEssaFita foo() { salve 1; }\nfoo();\nfoo();";
+        let result = find_references(source, Position::new(0, 13), test_uri()); // on "foo" declaration
+        assert_eq!(result.len(), 3); // declaration + 2 calls
+    }
+
+    #[test]
+    fn get_hover_returns_function_info() {
+        let source = "olhaEssaFita soma(a, b) { toma a + b; }";
+        let result = get_hover(source, Position::new(0, 13)); // on "soma"
+        assert!(result.is_some());
+        let hover = result.unwrap();
+        assert!(hover.contains("function"));
+        assert!(
+            hover.contains("soma(a, b)"),
+            "Expected 'soma(a, b)' in hover, got: {}",
+            hover
+        );
+    }
+
+    #[test]
+    fn get_hover_returns_function_with_no_params() {
+        let source = "olhaEssaFita ping() { salve 1; }";
+        let result = get_hover(source, Position::new(0, 13)); // on "ping"
+        assert!(result.is_some());
+        let hover = result.unwrap();
+        assert!(
+            hover.contains("ping()"),
+            "Expected 'ping()' in hover, got: {}",
+            hover
+        );
+    }
+
+    #[test]
+    fn get_completions_includes_function_names() {
+        let source = "olhaEssaFita soma(a, b) { toma a + b; }";
+        let result = get_completions(source, "so");
+        assert!(result.iter().any(|c| c.label == "soma"));
+    }
+
+    #[test]
+    fn function_completion_has_function_kind() {
+        let source = "olhaEssaFita soma(a, b) { toma a + b; }";
+        let result = get_completions(source, "so");
+        let soma = result.iter().find(|c| c.label == "soma");
+        assert!(soma.is_some());
+        assert_eq!(soma.unwrap().kind, Some(CompletionItemKind::FUNCTION));
+    }
+
+    #[test]
+    fn function_completion_shows_params_in_detail() {
+        let source = "olhaEssaFita soma(a, b) { toma a + b; }";
+        let result = get_completions(source, "so");
+        let soma = result.iter().find(|c| c.label == "soma").unwrap();
+        assert_eq!(soma.detail, Some("(a, b)".to_string()));
+    }
+
+    #[test]
+    fn function_completion_shows_empty_params_in_detail() {
+        let source = "olhaEssaFita ping() { salve 1; }";
+        let result = get_completions(source, "pi");
+        let ping = result.iter().find(|c| c.label == "ping").unwrap();
+        assert_eq!(ping.detail, Some("()".to_string()));
     }
 }

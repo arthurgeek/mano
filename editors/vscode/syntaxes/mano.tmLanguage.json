@@ -2,6 +2,8 @@
   "scopeName": "source.mano",
   "patterns": [
     { "include": "#comments" },
+    { "include": "#function-declaration" },
+    { "include": "#function-call" },
     { "include": "#keywords" },
     { "include": "#strings" },
     { "include": "#numbers" }
@@ -31,11 +33,28 @@
         { "include": "#block-comment" }
       ]
     },
+    "function-declaration": {
+      "match": "\\b(olhaEssaFita)\\s+([\\p{L}\\p{Emoji}_][\\p{L}\\p{N}\\p{Emoji}_]*)\\s*\\(",
+      "captures": {
+        "1": { "name": "keyword.other.function.mano" },
+        "2": { "name": "entity.name.function.mano" }
+      }
+    },
+    "function-call": {
+      "match": "\\b([\\p{L}\\p{Emoji}_][\\p{L}\\p{N}\\p{Emoji}_]*)\\s*\\(",
+      "captures": {
+        "1": { "name": "entity.name.function.call.mano" }
+      }
+    },
     "keywords": {
       "patterns": [
         {
           "name": "keyword.control.mano",
-          "match": "\\b(sePá|vacilou|segueOFluxo|seVira|saiFora)\\b"
+          "match": "\\b(sePá|vacilou|segueOFluxo|seVira|saiFora|toma)\\b"
+        },
+        {
+          "name": "keyword.other.function.mano",
+          "match": "\\b(olhaEssaFita)\\b"
         },
         {
           "name": "keyword.other.mano",
