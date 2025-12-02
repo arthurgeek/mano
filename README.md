@@ -142,6 +142,8 @@ mano implements several [Crafting Interpreters challenges](https://craftinginter
 | Lambda expressions | Anonymous functions: `olhaEssaFita (x) { toma x * 2; }` |
 | Unicode identifiers | Including emoji: `seLiga 🔥 = 42` |
 | `oiSumida` alias | Second print keyword for variety |
+| Unused variable warnings | Error on unused locals (use `_` prefix to suppress) |
+| Static type checking | Catches type errors on literals at compile time |
 | Source spans | All tokens/AST nodes track position for errors and LSP |
 | Rich errors | Beautiful diagnostics with [ariadne](https://github.com/zesterer/ariadne) |
 | REPL | Syntax highlighting, auto-complete, multi-line editing, history |

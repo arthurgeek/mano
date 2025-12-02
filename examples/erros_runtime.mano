@@ -1,5 +1,11 @@
-// Erros de execucao
-salve -"salve";
-salve "e ai" - "parca";
-salve 1 + "truta";
-salve 1 < "vei";
+// Erros de tipo em variáveis (só pegos em tempo de execução)
+seLiga x = "salve";
+salve -x;             // menos unário em string (via variável)
+
+seLiga a = "e ai";
+seLiga b = "parca";
+salve a - b;          // subtração de strings (via variáveis)
+
+seLiga n = 1;
+seLiga s = "truta";
+salve n + s;          // número + string (via variáveis)

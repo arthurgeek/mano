@@ -17,6 +17,9 @@ pub enum ManoError {
     #[error("Deu ruim na execução, brother!")]
     Runtime { message: String, span: Range<usize> },
 
+    #[error("Pô, mano! Erro de escopo!")]
+    Resolution { message: String, span: Range<usize> },
+
     #[error("")]
     Break,
 
@@ -68,5 +71,14 @@ mod tests {
             span: 30..35,
         };
         assert_eq!(err.to_string(), "Deu ruim na execução, brother!");
+    }
+
+    #[test]
+    fn resolution_error_roasts_user() {
+        let err = ManoError::Resolution {
+            message: "Já tem uma 'x' aqui, chapa!".to_string(),
+            span: 40..45,
+        };
+        assert_eq!(err.to_string(), "Pô, mano! Erro de escopo!");
     }
 }

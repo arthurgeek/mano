@@ -6,11 +6,14 @@ use std::time::SystemTime;
 use crate::ast::{Expr, Stmt};
 use crate::environment::Environment;
 use crate::error::ManoError;
+use crate::resolver::Resolutions;
 use crate::token::{Literal, TokenType};
 use crate::value::{Function, ManoFunction, NativeFunction, Value};
 
 pub struct Interpreter {
     environment: Rc<RefCell<Environment>>,
+    globals: Rc<RefCell<Environment>>,
+    resolutions: Resolutions,
 }
 
 impl Interpreter {
@@ -34,11 +37,19 @@ impl Interpreter {
             Value::Function(Rc::new(Function::Native(faz_teu_corre))),
         );
 
-        Self { environment }
+        Self {
+            globals: Rc::clone(&environment),
+            environment,
+            resolutions: Resolutions::new(),
+        }
     }
 
     pub fn variable_names(&self) -> Vec<String> {
         self.environment.borrow().variable_names()
+    }
+
+    pub fn set_resolutions(&mut self, resolutions: Resolutions) {
+        self.resolutions = resolutions;
     }
 
     pub fn execute(&mut self, stmt: &Stmt, output: &mut dyn Write) -> Result<(), ManoError> {
@@ -55,15 +66,27 @@ impl Interpreter {
             Stmt::Var {
                 name, initializer, ..
             } => {
-                if let Some(expr) = initializer {
+                // Use slot-based for locals, name-based for globals
+                if Rc::ptr_eq(&self.environment, &self.globals) {
+                    if let Some(expr) = initializer {
+                        let value = self.interpret(expr, output)?;
+                        self.environment
+                            .borrow_mut()
+                            .define(name.lexeme.clone(), value);
+                    } else {
+                        self.environment
+                            .borrow_mut()
+                            .define_uninitialized(name.lexeme.clone());
+                    }
+                } else if let Some(expr) = initializer {
                     let value = self.interpret(expr, output)?;
                     self.environment
                         .borrow_mut()
-                        .define(name.lexeme.clone(), value);
+                        .define_at_slot(name.lexeme.clone(), value);
                 } else {
                     self.environment
                         .borrow_mut()
-                        .define_uninitialized(name.lexeme.clone());
+                        .define_uninitialized_at_slot(name.lexeme.clone());
                 }
                 Ok(())
             }
@@ -110,10 +133,18 @@ impl Interpreter {
                     body: body.clone(),
                     closure: Rc::clone(&self.environment),
                 };
-                self.environment.borrow_mut().define(
-                    name.lexeme.clone(),
-                    Value::Function(Rc::new(Function::Mano(function))),
-                );
+                let value = Value::Function(Rc::new(Function::Mano(function)));
+
+                // Use slot-based for locals, name-based for globals
+                if Rc::ptr_eq(&self.environment, &self.globals) {
+                    self.environment
+                        .borrow_mut()
+                        .define(name.lexeme.clone(), value);
+                } else {
+                    self.environment
+                        .borrow_mut()
+                        .define_at_slot(name.lexeme.clone(), value);
+                }
                 Ok(())
             }
             Stmt::Return { value, .. } => {
@@ -238,17 +269,34 @@ impl Interpreter {
                     self.interpret(else_branch, output)
                 }
             }
-            Expr::Variable { name } => self
-                .environment
-                .borrow()
-                .get(&name.lexeme, name.span.clone()),
+            Expr::Variable { name } => {
+                if let Some(&(distance, slot)) = self.resolutions.get(&name.span) {
+                    self.environment
+                        .borrow()
+                        .get_at(distance, slot)
+                        .ok_or_else(|| ManoError::Runtime {
+                            message: format!("Variável '{}' não existe, mano!", name.lexeme),
+                            span: name.span.clone(),
+                        })
+                } else {
+                    // Unresolved = must be global
+                    self.globals.borrow().get(&name.lexeme, name.span.clone())
+                }
+            }
             Expr::Assign { name, value } => {
                 let val = self.interpret(value, output)?;
-                self.environment.borrow_mut().assign(
-                    &name.lexeme,
-                    val.clone(),
-                    name.span.clone(),
-                )?;
+                if let Some(&(distance, slot)) = self.resolutions.get(&name.span) {
+                    self.environment
+                        .borrow_mut()
+                        .assign_at(distance, slot, val.clone());
+                } else {
+                    // Unresolved = must be global
+                    self.globals.borrow_mut().assign(
+                        &name.lexeme,
+                        val.clone(),
+                        name.span.clone(),
+                    )?;
+                }
                 Ok(val)
             }
             Expr::Logical {
@@ -350,11 +398,11 @@ impl Interpreter {
             &func.closure,
         ))));
 
-        // Bind parameters to arguments
+        // Bind parameters to arguments (function scope is always local, use slots)
         for (param, arg) in func.params.iter().zip(args.into_iter()) {
             self.environment
                 .borrow_mut()
-                .define(param.lexeme.clone(), arg);
+                .define_at_slot(param.lexeme.clone(), arg);
         }
 
         // Execute body
@@ -1134,6 +1182,62 @@ mod tests {
     }
 
     #[test]
+    fn local_uninitialized_variable_uses_slot() {
+        // { seLiga x; x = 42; salve x; }
+        let mut interpreter = Interpreter::new();
+        interpreter.set_resolutions(
+            [(0..1, (0, 0)), (10..11, (0, 0)), (20..21, (0, 0))]
+                .into_iter()
+                .collect(),
+        );
+        let mut output = Vec::new();
+
+        let block = Stmt::Block {
+            statements: vec![
+                Stmt::Var {
+                    name: crate::token::Token {
+                        token_type: crate::token::TokenType::Identifier,
+                        lexeme: "x".to_string(),
+                        literal: None,
+                        span: 0..1,
+                    },
+                    initializer: None,
+                    span: 0..5,
+                },
+                Stmt::Expression {
+                    expression: Expr::Assign {
+                        name: crate::token::Token {
+                            token_type: crate::token::TokenType::Identifier,
+                            lexeme: "x".to_string(),
+                            literal: None,
+                            span: 10..11,
+                        },
+                        value: Box::new(Expr::Literal {
+                            value: crate::token::Literal::Number(42.0),
+                        }),
+                    },
+                    span: 10..15,
+                },
+                Stmt::Print {
+                    expression: Expr::Variable {
+                        name: crate::token::Token {
+                            token_type: crate::token::TokenType::Identifier,
+                            lexeme: "x".to_string(),
+                            literal: None,
+                            span: 20..21,
+                        },
+                    },
+                    span: 20..25,
+                },
+            ],
+            span: 0..30,
+        };
+
+        interpreter.execute(&block, &mut output).unwrap();
+        assert_eq!(String::from_utf8(output).unwrap().trim(), "42");
+    }
+
+    #[test]
     fn assigning_uninitialized_variable_works() {
         let mut interpreter = Interpreter::new();
         let mut output = Vec::new();
@@ -1229,6 +1333,7 @@ mod tests {
 
     #[test]
     fn block_shadows_outer_scope() {
+        use crate::resolver::Resolver;
         let mut interpreter = Interpreter::new();
         let mut output = Vec::new();
 
@@ -1239,7 +1344,6 @@ mod tests {
                 value: Literal::Number(1.0),
             }),
         );
-        interpreter.execute(&var_stmt, &mut output).unwrap();
 
         // { seLiga x = 99; salve x; }
         let block = Stmt::block(vec![
@@ -1253,12 +1357,21 @@ mod tests {
                 name: make_token(crate::token::TokenType::Identifier, "x", 3),
             }),
         ]);
-        interpreter.execute(&block, &mut output).unwrap();
 
         // salve x; (should be 1 again)
         let print_stmt = Stmt::print(Expr::Variable {
             name: make_token(crate::token::TokenType::Identifier, "x", 4),
         });
+
+        // Resolve all statements together
+        let statements = vec![var_stmt.clone(), block.clone(), print_stmt.clone()];
+        let resolver = Resolver::new();
+        let resolutions = resolver.resolve(&statements).unwrap();
+        interpreter.set_resolutions(resolutions);
+
+        // Execute
+        interpreter.execute(&var_stmt, &mut output).unwrap();
+        interpreter.execute(&block, &mut output).unwrap();
         interpreter.execute(&print_stmt, &mut output).unwrap();
 
         assert_eq!(String::from_utf8(output).unwrap(), "99\n1\n");
@@ -1755,30 +1868,39 @@ mod tests {
 
     #[test]
     fn function_call_with_arguments() {
+        use crate::resolver::Resolver;
         let mut interpreter = Interpreter::new();
         let mut output = Vec::new();
 
         // olhaEssaFita saudar(nome) { salve nome; }
         let func_stmt = Stmt::Function {
             name: make_token(TokenType::Identifier, "saudar", 0),
-            params: vec![make_token(TokenType::Identifier, "nome", 0)],
+            params: vec![make_token(TokenType::Identifier, "nome", 10)],
             body: vec![Stmt::print(Expr::Variable {
-                name: make_token(TokenType::Identifier, "nome", 0),
+                name: make_token(TokenType::Identifier, "nome", 20),
             })],
             span: 0..30,
         };
-        interpreter.execute(&func_stmt, &mut output).unwrap();
 
         // saudar("mano");
         let call_stmt = Stmt::expression(Expr::Call {
             callee: Box::new(Expr::Variable {
-                name: make_token(TokenType::Identifier, "saudar", 0),
+                name: make_token(TokenType::Identifier, "saudar", 40),
             }),
-            paren: make_token(TokenType::RightParen, ")", 0),
+            paren: make_token(TokenType::RightParen, ")", 50),
             arguments: vec![Expr::Literal {
                 value: Literal::String("mano".to_string()),
             }],
         });
+
+        // Resolve
+        let statements = vec![func_stmt.clone(), call_stmt.clone()];
+        let resolver = Resolver::new();
+        let resolutions = resolver.resolve(&statements).unwrap();
+        interpreter.set_resolutions(resolutions);
+
+        // Execute
+        interpreter.execute(&func_stmt, &mut output).unwrap();
         interpreter.execute(&call_stmt, &mut output).unwrap();
 
         assert_eq!(String::from_utf8(output).unwrap(), "mano\n");
@@ -2045,6 +2167,7 @@ mod tests {
 
     #[test]
     fn lambda_can_be_called() {
+        use crate::resolver::Resolver;
         let mut interpreter = Interpreter::new();
         let mut output = Vec::new();
 
@@ -2052,35 +2175,43 @@ mod tests {
         let var_stmt = Stmt::Var {
             name: make_token(TokenType::Identifier, "dobro", 0),
             initializer: Some(Expr::Lambda {
-                params: vec![make_token(TokenType::Identifier, "x", 0)],
+                params: vec![make_token(TokenType::Identifier, "x", 10)],
                 body: vec![Stmt::Return {
-                    keyword: make_token(TokenType::Return, "toma", 0),
+                    keyword: make_token(TokenType::Return, "toma", 20),
                     value: Some(Expr::Binary {
                         left: Box::new(Expr::Variable {
-                            name: make_token(TokenType::Identifier, "x", 0),
+                            name: make_token(TokenType::Identifier, "x", 30),
                         }),
-                        operator: make_token(TokenType::Star, "*", 0),
+                        operator: make_token(TokenType::Star, "*", 35),
                         right: Box::new(Expr::Literal {
                             value: Literal::Number(2.0),
                         }),
                     }),
-                    span: 0..10,
+                    span: 20..40,
                 }],
             }),
-            span: 0..30,
+            span: 0..50,
         };
-        interpreter.execute(&var_stmt, &mut output).unwrap();
 
         // dobro(5);
         let call_expr = Expr::Call {
             callee: Box::new(Expr::Variable {
-                name: make_token(TokenType::Identifier, "dobro", 0),
+                name: make_token(TokenType::Identifier, "dobro", 60),
             }),
-            paren: make_token(TokenType::RightParen, ")", 0),
+            paren: make_token(TokenType::RightParen, ")", 70),
             arguments: vec![Expr::Literal {
                 value: Literal::Number(5.0),
             }],
         };
+
+        // Resolve
+        let statements = vec![var_stmt.clone()];
+        let resolver = Resolver::new();
+        let resolutions = resolver.resolve(&statements).unwrap();
+        interpreter.set_resolutions(resolutions);
+
+        // Execute
+        interpreter.execute(&var_stmt, &mut output).unwrap();
         let result = eval(&mut interpreter, &call_expr).unwrap();
         assert_eq!(result, num(10.0));
     }
@@ -2121,5 +2252,192 @@ mod tests {
         };
         let result = eval(&mut interpreter, &call_expr);
         assert!(result.is_err());
+    }
+
+    // === resolution tests ===
+
+    #[test]
+    fn set_resolutions_stores_resolved_distances() {
+        use crate::resolver::Resolutions;
+        let mut interpreter = Interpreter::new();
+        let mut resolutions = Resolutions::new();
+        resolutions.insert(10..15, (0, 0)); // span 10..15 resolves to distance 0
+        interpreter.set_resolutions(resolutions.clone());
+        // Just testing the method exists and stores the value
+    }
+
+    #[test]
+    fn variable_uses_resolved_distance() {
+        use crate::resolver::Resolutions;
+        let mut interpreter = Interpreter::new();
+
+        // Define x=42 in outer scope at slot 0
+        let outer_env = Rc::clone(&interpreter.environment);
+        outer_env
+            .borrow_mut()
+            .define_at_slot("x".to_string(), num(42.0)); // slot 0
+
+        // Create inner scope and shadow x=99 at slot 0
+        let inner_env = Rc::new(RefCell::new(Environment::with_enclosing(Rc::clone(
+            &outer_env,
+        ))));
+        inner_env
+            .borrow_mut()
+            .define_at_slot("x".to_string(), num(99.0)); // slot 0
+        interpreter.environment = inner_env;
+
+        // Variable expression at span 0..1
+        let var_expr = Expr::Variable {
+            name: make_token(TokenType::Identifier, "x", 0),
+        };
+
+        // Set resolution: span 0..1 should resolve to distance 1, slot 0 (outer x=42)
+        let mut resolutions = Resolutions::new();
+        resolutions.insert(0..1, (1, 0));
+        interpreter.set_resolutions(resolutions);
+
+        // Should find x=42 at distance 1, NOT x=99 at distance 0
+        let result = eval(&mut interpreter, &var_expr).unwrap();
+        assert_eq!(result, num(42.0));
+    }
+
+    #[test]
+    fn unresolved_assign_updates_globals_only() {
+        use crate::resolver::Resolutions;
+        let mut interpreter = Interpreter::new();
+
+        // Define x=1 in globals
+        interpreter
+            .globals
+            .borrow_mut()
+            .define("x".to_string(), num(1.0));
+
+        // Create a non-global scope with local x=50 at slot 0
+        let inner_env = Rc::new(RefCell::new(Environment::with_enclosing(Rc::clone(
+            &interpreter.globals,
+        ))));
+        inner_env
+            .borrow_mut()
+            .define_at_slot("x".to_string(), num(50.0)); // slot 0
+        interpreter.environment = Rc::clone(&inner_env);
+
+        // Assign expression - NO resolution (global variable)
+        let assign_expr = Expr::Assign {
+            name: make_token(TokenType::Identifier, "x", 0),
+            value: Box::new(Expr::Literal {
+                value: Literal::Number(99.0),
+            }),
+        };
+
+        // No resolutions set - should assign to globals ONLY
+        interpreter.set_resolutions(Resolutions::new());
+        eval(&mut interpreter, &assign_expr).unwrap();
+
+        // Global x should be updated to 99
+        let global_result = interpreter.globals.borrow().get("x", 0..1).unwrap();
+        assert_eq!(global_result, num(99.0));
+
+        // Local slot 0 should still be 50
+        let local_result = inner_env.borrow().get_at(0, 0).unwrap();
+        assert_eq!(local_result, num(50.0));
+    }
+
+    #[test]
+    fn unresolved_variable_looks_up_in_globals_only() {
+        use crate::resolver::Resolutions;
+        let mut interpreter = Interpreter::new();
+
+        // Define x=42 in globals
+        interpreter
+            .globals
+            .borrow_mut()
+            .define("x".to_string(), num(42.0));
+
+        // Create a non-global scope that shadows x=99
+        let inner_env = Rc::new(RefCell::new(Environment::with_enclosing(Rc::clone(
+            &interpreter.globals,
+        ))));
+        inner_env.borrow_mut().define("x".to_string(), num(99.0));
+        interpreter.environment = inner_env;
+
+        // Variable expression at span 0..1 - NO resolution (global variable)
+        let var_expr = Expr::Variable {
+            name: make_token(TokenType::Identifier, "x", 0),
+        };
+
+        // No resolutions set - should look up in globals ONLY, finding x=42
+        interpreter.set_resolutions(Resolutions::new());
+
+        let result = eval(&mut interpreter, &var_expr).unwrap();
+        // Should find global x=42, NOT the shadowing x=99
+        assert_eq!(result, num(42.0));
+    }
+
+    #[test]
+    fn resolved_variable_not_found_returns_error() {
+        use crate::resolver::Resolutions;
+        let mut interpreter = Interpreter::new();
+
+        // Variable expression at span 0..1
+        let var_expr = Expr::Variable {
+            name: make_token(TokenType::Identifier, "x", 0),
+        };
+
+        // Set resolution saying x is at distance 0, but don't define x
+        let mut resolutions = Resolutions::new();
+        resolutions.insert(0..1, (0, 0));
+        interpreter.set_resolutions(resolutions);
+
+        // Should error because x doesn't exist at the resolved distance
+        let result = eval(&mut interpreter, &var_expr);
+        assert!(matches!(result, Err(ManoError::Runtime { .. })));
+        if let Err(ManoError::Runtime { message, .. }) = result {
+            assert!(message.contains("não existe"));
+        }
+    }
+
+    #[test]
+    fn assign_uses_resolved_distance() {
+        use crate::resolver::Resolutions;
+        let mut interpreter = Interpreter::new();
+
+        // Define x=1 in outer scope at slot 0
+        let outer_env = Rc::clone(&interpreter.environment);
+        outer_env
+            .borrow_mut()
+            .define_at_slot("x".to_string(), num(1.0)); // slot 0
+
+        // Create inner scope and shadow x=50 at slot 0
+        let inner_env = Rc::new(RefCell::new(Environment::with_enclosing(Rc::clone(
+            &outer_env,
+        ))));
+        inner_env
+            .borrow_mut()
+            .define_at_slot("x".to_string(), num(50.0)); // slot 0
+        interpreter.environment = Rc::clone(&inner_env);
+
+        // Assign expression at span 0..5 assigns to x
+        let assign_expr = Expr::Assign {
+            name: make_token(TokenType::Identifier, "x", 0),
+            value: Box::new(Expr::Literal {
+                value: Literal::Number(99.0),
+            }),
+        };
+
+        // Set resolution: span 0..1 resolves to distance 1, slot 0 (outer scope)
+        let mut resolutions = Resolutions::new();
+        resolutions.insert(0..1, (1, 0));
+        interpreter.set_resolutions(resolutions);
+
+        // Execute assignment
+        eval(&mut interpreter, &assign_expr).unwrap();
+
+        // Check that outer slot 0 was updated to 99
+        let outer_result = outer_env.borrow().get_at(0, 0).unwrap();
+        assert_eq!(outer_result, num(99.0));
+
+        // And local slot 0 should still be 50
+        let local_result = inner_env.borrow().get_at(0, 0).unwrap();
+        assert_eq!(local_result, num(50.0));
     }
 }

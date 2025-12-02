@@ -3,6 +3,7 @@ mod environment;
 mod error;
 mod interpreter;
 mod parser;
+mod resolver;
 mod scanner;
 mod token;
 mod value;
@@ -63,6 +64,17 @@ impl Mano {
         if !errors.is_empty() {
             return errors;
         }
+
+        // Resolve variable bindings
+        let resolver = resolver::Resolver::new();
+        let resolutions = match resolver.resolve(&statements) {
+            Ok(r) => r,
+            Err(errs) => {
+                return errs;
+            }
+        };
+
+        self.interpreter.set_resolutions(resolutions);
 
         for stmt in &statements {
             if let Err(e) = self.interpreter.execute(stmt, &mut stdout) {
@@ -155,9 +167,20 @@ mod tests {
     fn run_returns_runtime_error() {
         let mut mano = Mano::new();
         let mut stdout = Vec::new();
-        let errors = mano.run("salve -\"mano\";", &mut stdout);
+        // Use variable so type error is only caught at runtime
+        let errors = mano.run("seLiga x = \"mano\"; salve -x;", &mut stdout);
         assert_eq!(errors.len(), 1);
         assert!(matches!(&errors[0], ManoError::Runtime { .. }));
+    }
+
+    #[test]
+    fn run_returns_resolution_error_for_literal_type_mismatch() {
+        let mut mano = Mano::new();
+        let mut stdout = Vec::new();
+        // Literal type errors are caught at resolution time
+        let errors = mano.run("salve -\"mano\";", &mut stdout);
+        assert_eq!(errors.len(), 1);
+        assert!(matches!(&errors[0], ManoError::Resolution { .. }));
     }
 
     #[test]
@@ -201,5 +224,102 @@ mod tests {
     #[test]
     fn default_creates_new_mano() {
         let _mano: Mano = Default::default();
+    }
+
+    #[test]
+    fn run_returns_resolution_error_for_self_reference() {
+        let mut mano = Mano::new();
+        let mut stdout = Vec::new();
+        // seLiga a = a; -> self-reference in initializer
+        let errors = mano.run("{ seLiga a = a; }", &mut stdout);
+        assert_eq!(errors.len(), 1);
+        assert!(matches!(&errors[0], ManoError::Resolution { .. }));
+    }
+
+    #[test]
+    fn run_returns_resolution_error_for_duplicate_var() {
+        let mut mano = Mano::new();
+        let mut stdout = Vec::new();
+        // Two vars with same name in same scope (use underscore prefix to avoid unused var error)
+        let errors = mano.run("{ seLiga _x = 1; seLiga _x = 2; }", &mut stdout);
+        assert_eq!(errors.len(), 1);
+        assert!(matches!(&errors[0], ManoError::Resolution { .. }));
+    }
+
+    // === closure semantics tests ===
+
+    #[test]
+    fn closure_captures_variable_at_definition_time() {
+        // This is the key test from Chapter 11 - the closure bug
+        // The closure should capture 'a' from the enclosing scope
+        // where it was DEFINED, not where it's CALLED.
+        let mut mano = Mano::new();
+        let mut stdout = Vec::new();
+        let code = r#"
+            seLiga a = "global";
+            {
+                olhaEssaFita mostra() {
+                    salve a;
+                }
+
+                mostra();
+                seLiga _a = "block";
+                mostra();
+            }
+        "#;
+        let errors = mano.run(code, &mut stdout);
+        assert!(errors.is_empty(), "Got errors: {:?}", errors);
+        let output = String::from_utf8(stdout).unwrap();
+        let lines: Vec<&str> = output.trim().lines().collect();
+        // Both calls should print "global" because the closure
+        // was resolved to the outer 'a', not the inner shadowing '_a'
+        assert_eq!(lines, vec!["global", "global"]);
+    }
+
+    #[test]
+    fn closure_captures_enclosing_scope_correctly() {
+        let mut mano = Mano::new();
+        let mut stdout = Vec::new();
+        let code = r#"
+            olhaEssaFita makeCounter() {
+                seLiga i = 0;
+                olhaEssaFita count() {
+                    i = i + 1;
+                    salve i;
+                }
+                toma count;
+            }
+
+            seLiga counter = makeCounter();
+            counter();
+            counter();
+            counter();
+        "#;
+        let errors = mano.run(code, &mut stdout);
+        assert!(errors.is_empty(), "Got errors: {:?}", errors);
+        let output = String::from_utf8(stdout).unwrap();
+        let lines: Vec<&str> = output.trim().lines().collect();
+        assert_eq!(lines, vec!["1", "2", "3"]);
+    }
+
+    #[test]
+    fn nested_closures_resolve_correctly() {
+        let mut mano = Mano::new();
+        let mut stdout = Vec::new();
+        let code = r#"
+            seLiga x = "outer";
+            olhaEssaFita outer() {
+                seLiga x = "middle";
+                olhaEssaFita inner() {
+                    salve x;
+                }
+                inner();
+            }
+            outer();
+        "#;
+        let errors = mano.run(code, &mut stdout);
+        assert!(errors.is_empty(), "Got errors: {:?}", errors);
+        let output = String::from_utf8(stdout).unwrap();
+        assert_eq!(output.trim(), "middle");
     }
 }

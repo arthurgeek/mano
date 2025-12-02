@@ -1,0 +1,5 @@
+// Erros de tipo em literais (pegos na análise estática)
+salve -"salve";           // menos unário em string
+salve "e ai" - "parca";   // subtração de strings
+salve 1 + "truta";        // número + string
+salve 1 < "vei";          // comparação número com string

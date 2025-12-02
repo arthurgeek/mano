@@ -64,6 +64,19 @@ pub fn report_error<W: Write>(
                 .write(src, &mut writer)
                 .ok();
         }
+        ManoError::Resolution { span, message } => {
+            let char_span = byte_to_char_span(source, span);
+            Report::build(ReportKind::Error, (name, char_span.clone()))
+                .with_message(error.to_string())
+                .with_label(
+                    Label::new((name, char_span))
+                        .with_message(message)
+                        .with_color(Color::Red),
+                )
+                .finish()
+                .write(src, &mut writer)
+                .ok();
+        }
         ManoError::Break | ManoError::Return(_) => {
             // Internal control flow, should never be reported to users
         }
@@ -177,6 +190,19 @@ mod tests {
         let mut output = Vec::new();
         report_error(&error, "", None, &mut output);
         assert!(output.is_empty());
+    }
+
+    #[test]
+    fn report_resolution_error_shows_span() {
+        let error = ManoError::Resolution {
+            message: "Já tem uma 'x' aqui, chapa!".to_string(),
+            span: 0..5,
+        };
+        let source = "seLiga x;";
+        let mut output = Vec::new();
+        report_error(&error, source, None, &mut output);
+        let result = String::from_utf8(output).unwrap();
+        assert!(result.contains("Pô, mano! Erro de escopo!"));
     }
 
     // Snapshot tests for exact error formatting
