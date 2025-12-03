@@ -1,0 +1,32 @@
+// mano - a linguagem dos cria! 🔥
+bagulho Rolê {
+    bora(local, animado) {
+        oCara.local = local;
+        oCara.animado = animado;
+    }
+    curtir() { salve "Curtindo na " + oCara.local; }
+}
+
+bagulho Churras < Rolê {
+    bora(local, animado) {
+        mestre.bora(local, animado);
+    }
+    chamarGeral(n) {
+        olhaEssaFita chamar() { salve "Chamando mais um mano!"; }
+        seVira (seLiga i = 1; i <= n; i = i + 1) {
+            chamar();
+        }
+    }
+    curtir() {
+        sePá (oCara.animado) {
+            mestre.curtir();
+            salve "Assando picanha! 🔥";
+        } vacilou {
+            salve "Churras cancelado...";
+        }
+    }
+}
+
+seLiga sabado = Churras("Laje", firmeza);
+sabado.chamarGeral(3);
+sabado.curtir();

@@ -19,8 +19,8 @@ Built with [Claude Code](https://claude.ai/code) — I designed and directed whi
 - Unicode identifiers (including emoji! `seLiga 🔥 = 100`)
 - [Turing complete](examples/minsky.mano) (proven via Minsky machine simulation)
 
-![Syntax highlighting in VS Code showing a prime number checker with control flow, loops, and the modulo operator](assets/vscode-syntax.png)
-*Prime number checker showcasing keywords, control flow, and the `%` operator*
+![Syntax highlighting in VS Code showing classes, inheritance, and control flow](assets/vscode-syntax.png)
+*Churras na laje showcasing classes, inheritance, and control flow*
 
 ## Example
 
