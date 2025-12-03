@@ -65,6 +65,10 @@
           "match": "\\b(oCara)\\b"
         },
         {
+          "name": "variable.language.super.mano",
+          "match": "\\b(mestre)\\b"
+        },
+        {
           "name": "keyword.other.mano",
           "match": "\\b(salve|oiSumida|seLiga|tamoJunto|ow)\\b"
         },

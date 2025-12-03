@@ -634,4 +634,118 @@ mod tests {
             error_msg
         );
     }
+
+    // === mestre (super) tests (Chapter 13.3) ===
+
+    #[test]
+    fn mestre_calls_superclass_method() {
+        let mut mano = Mano::new();
+        let mut stdout = Vec::new();
+        let code = r#"
+            bagulho Sonho {
+                cozinhar() {
+                    salve "Frita até dourar.";
+                }
+            }
+
+            bagulho SonhoDeCreme < Sonho {
+                cozinhar() {
+                    mestre.cozinhar();
+                    salve "Enche de creme.";
+                }
+            }
+
+            seLiga s = SonhoDeCreme();
+            s.cozinhar();
+        "#;
+        let errors = mano.run(code, &mut stdout);
+        assert!(errors.is_empty(), "Got errors: {:?}", errors);
+        let output = String::from_utf8(stdout).unwrap();
+        let lines: Vec<&str> = output.trim().lines().collect();
+        assert_eq!(lines, vec!["Frita até dourar.", "Enche de creme."]);
+    }
+
+    #[test]
+    fn mestre_calls_correct_superclass_in_inheritance_chain() {
+        // This is the critical test from the book - super always refers
+        // to the declaring class's superclass, not the receiver's class
+        let mut mano = Mano::new();
+        let mut stdout = Vec::new();
+        let code = r#"
+            bagulho A {
+                method() {
+                    salve "A method";
+                }
+            }
+
+            bagulho B < A {
+                method() {
+                    salve "B method";
+                }
+
+                test() {
+                    mestre.method();
+                }
+            }
+
+            bagulho C < B {}
+
+            C().test();
+        "#;
+        let errors = mano.run(code, &mut stdout);
+        assert!(errors.is_empty(), "Got errors: {:?}", errors);
+        // mestre.method() in B should call A.method(), not B.method()
+        // even though we're calling it on a C instance
+        assert_eq!(String::from_utf8(stdout).unwrap().trim(), "A method");
+    }
+
+    #[test]
+    fn mestre_outside_class_is_error() {
+        let mut mano = Mano::new();
+        let mut stdout = Vec::new();
+        let code = "mestre.foo();";
+        let errors = mano.run(code, &mut stdout);
+        assert!(!errors.is_empty());
+        assert!(errors.iter().any(
+            |e| matches!(e, ManoError::Resolution { message, .. } if message.contains("mestre"))
+        ));
+    }
+
+    #[test]
+    fn mestre_in_class_without_superclass_is_error() {
+        let mut mano = Mano::new();
+        let mut stdout = Vec::new();
+        let code = r#"
+            bagulho Solitario {
+                teste() {
+                    mestre.foo();
+                }
+            }
+        "#;
+        let errors = mano.run(code, &mut stdout);
+        assert!(!errors.is_empty());
+        assert!(errors.iter().any(
+            |e| matches!(e, ManoError::Resolution { message, .. } if message.contains("mestre"))
+        ));
+    }
+
+    #[test]
+    fn mestre_method_not_found_is_error() {
+        let mut mano = Mano::new();
+        let mut stdout = Vec::new();
+        let code = r#"
+            bagulho Pai {}
+            bagulho Filho < Pai {
+                teste() {
+                    mestre.naoExiste();
+                }
+            }
+            Filho().teste();
+        "#;
+        let errors = mano.run(code, &mut stdout);
+        assert!(!errors.is_empty());
+        assert!(errors.iter().any(
+            |e| matches!(e, ManoError::Runtime { message, .. } if message.contains("não existe no mestre"))
+        ));
+    }
 }

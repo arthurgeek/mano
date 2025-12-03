@@ -57,6 +57,10 @@ pub enum Expr {
     This {
         keyword: Token,
     },
+    Super {
+        keyword: Token,
+        method: Token,
+    },
 }
 
 pub type Span = std::ops::Range<usize>;
@@ -113,6 +117,7 @@ pub enum Stmt {
     },
     Class {
         name: Token,
+        superclass: Option<Box<Expr>>,
         methods: Vec<Stmt>,
         span: Span,
     },
@@ -281,6 +286,7 @@ impl fmt::Display for Expr {
                 value,
             } => write!(f, "({}.{} = {})", object, name.lexeme, value),
             Expr::This { .. } => write!(f, "oCara"),
+            Expr::Super { method, .. } => write!(f, "mestre.{}", method.lexeme),
         }
     }
 }
@@ -855,6 +861,7 @@ mod tests {
         };
         let stmt = Stmt::Class {
             name: name.clone(),
+            superclass: None,
             methods: vec![method],
             span: 0..30,
         };
@@ -931,6 +938,7 @@ mod tests {
         let name = make_token(TokenType::Identifier, "Pessoa");
         let class = Stmt::Class {
             name: name.clone(),
+            superclass: None,
             methods: vec![],
             span: 0..15,
         };
@@ -951,6 +959,7 @@ mod tests {
         };
         let class = Stmt::Class {
             name,
+            superclass: None,
             methods: vec![method],
             span: 0..40,
         };
@@ -958,6 +967,35 @@ mod tests {
         assert_eq!(class.span(), 0..40);
         // children() returns empty for Class as methods aren't traversed
         assert!(class.children().is_empty());
+    }
+
+    #[test]
+    fn class_statement_with_superclass() {
+        let name = make_token(TokenType::Identifier, "Filho");
+        let superclass = Some(Box::new(Expr::Variable {
+            name: make_token(TokenType::Identifier, "Pai"),
+        }));
+        let class = Stmt::Class {
+            name: name.clone(),
+            superclass,
+            methods: vec![],
+            span: 0..20,
+        };
+
+        assert_eq!(class.span(), 0..20);
+        if let Stmt::Class {
+            superclass: Some(sc),
+            ..
+        } = &class
+        {
+            if let Expr::Variable { name } = sc.as_ref() {
+                assert_eq!(name.lexeme, "Pai");
+            } else {
+                panic!("Expected Variable expression for superclass");
+            }
+        } else {
+            panic!("Expected Class with superclass");
+        }
     }
 
     #[test]
@@ -1016,5 +1054,14 @@ mod tests {
             keyword: make_token(TokenType::This, "oCara"),
         };
         assert_eq!(expr.to_string(), "oCara");
+    }
+
+    #[test]
+    fn displays_super_expression() {
+        let expr = Expr::Super {
+            keyword: make_token(TokenType::Super, "mestre"),
+            method: make_token(TokenType::Identifier, "cozinhar"),
+        };
+        assert_eq!(expr.to_string(), "mestre.cozinhar");
     }
 }

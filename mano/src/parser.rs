@@ -182,6 +182,18 @@ impl Parser {
             .consume(TokenType::Identifier, "Cadê o nome do bagulho, tio?")?
             .clone();
 
+        // Parse optional superclass: < SuperclassName
+        let superclass = if self.match_types(&[TokenType::Less]) {
+            let superclass_name = self
+                .consume(TokenType::Identifier, "Cadê o nome do coroa, tio?")?
+                .clone();
+            Some(Box::new(Expr::Variable {
+                name: superclass_name,
+            }))
+        } else {
+            None
+        };
+
         self.consume(TokenType::LeftBrace, "Cadê o '{' antes das fitas, mano?")?;
 
         let mut methods = Vec::new();
@@ -200,6 +212,7 @@ impl Parser {
 
         Ok(Stmt::Class {
             name,
+            superclass,
             methods,
             span: start..end,
         })
@@ -758,6 +771,18 @@ impl Parser {
                 let keyword = token.clone();
                 self.advance();
                 Ok(Expr::This { keyword })
+            }
+            TokenType::Super => {
+                let keyword = token.clone();
+                self.advance();
+                self.consume(TokenType::Dot, "Cadê o '.' depois do mestre, tio?")?;
+                let method = self
+                    .consume(
+                        TokenType::Identifier,
+                        "Cadê o nome da fita do mestre, mano?",
+                    )?
+                    .clone();
+                Ok(Expr::Super { keyword, method })
             }
             _ => Err(ManoError::Parse {
                 message: "Cadê a expressão, jão?".to_string(),
@@ -3113,6 +3138,45 @@ mod tests {
     }
 
     #[test]
+    fn parses_class_with_superclass() {
+        // bagulho Filho < Pai {}
+        let tokens = vec![
+            make_token(TokenType::Class, "bagulho", None),
+            make_token(TokenType::Identifier, "Filho", None),
+            make_token(TokenType::Less, "<", None),
+            make_token(TokenType::Identifier, "Pai", None),
+            make_token(TokenType::LeftBrace, "{", None),
+            make_token(TokenType::RightBrace, "}", None),
+            eof(),
+        ];
+
+        let mut parser = Parser::new(tokens);
+        let statements = parser.parse().unwrap();
+
+        assert_eq!(statements.len(), 1);
+        match &statements[0] {
+            Stmt::Class {
+                name,
+                superclass,
+                methods,
+                ..
+            } => {
+                assert_eq!(name.lexeme, "Filho");
+                assert_eq!(methods.len(), 0);
+                assert!(superclass.is_some());
+                if let Some(sc) = superclass {
+                    if let Expr::Variable { name } = sc.as_ref() {
+                        assert_eq!(name.lexeme, "Pai");
+                    } else {
+                        panic!("Expected Variable expression for superclass");
+                    }
+                }
+            }
+            _ => panic!("Expected Class statement"),
+        }
+    }
+
+    #[test]
     fn error_on_class_missing_name() {
         let tokens = vec![
             make_token(TokenType::Class, "bagulho", None),
@@ -3245,6 +3309,69 @@ mod tests {
                 }
             }
             _ => panic!("expected class"),
+        }
+    }
+
+    #[test]
+    fn parses_super_expression() {
+        // mestre.cozinhar();
+        let tokens = vec![
+            make_token(TokenType::Super, "mestre", None),
+            make_token(TokenType::Dot, ".", None),
+            make_token(TokenType::Identifier, "cozinhar", None),
+            make_token(TokenType::LeftParen, "(", None),
+            make_token(TokenType::RightParen, ")", None),
+            semi(),
+            eof(),
+        ];
+        let mut parser = Parser::new(tokens);
+        let stmts = parser.parse().unwrap();
+        match &stmts[0] {
+            Stmt::Expression { expression, .. } => {
+                // Should be Call { callee: Super { method: "cozinhar" }, ... }
+                match expression {
+                    Expr::Call { callee, .. } => match callee.as_ref() {
+                        Expr::Super { keyword, method } => {
+                            assert_eq!(keyword.lexeme, "mestre");
+                            assert_eq!(method.lexeme, "cozinhar");
+                        }
+                        _ => panic!("expected Super expression as callee"),
+                    },
+                    _ => panic!("expected Call expression"),
+                }
+            }
+            _ => panic!("expected expression statement"),
+        }
+    }
+
+    #[test]
+    fn error_on_super_without_dot() {
+        // mestre; (missing dot)
+        let tokens = vec![make_token(TokenType::Super, "mestre", None), semi(), eof()];
+        let mut parser = Parser::new(tokens);
+        let _ = parser.parse();
+        let errors = parser.take_errors();
+        assert!(!errors.is_empty());
+        if let ManoError::Parse { message, .. } = &errors[0] {
+            assert!(message.contains(".") || message.contains("mestre"));
+        }
+    }
+
+    #[test]
+    fn error_on_super_without_method_name() {
+        // mestre.; (missing method name)
+        let tokens = vec![
+            make_token(TokenType::Super, "mestre", None),
+            make_token(TokenType::Dot, ".", None),
+            semi(),
+            eof(),
+        ];
+        let mut parser = Parser::new(tokens);
+        let _ = parser.parse();
+        let errors = parser.take_errors();
+        assert!(!errors.is_empty());
+        if let ManoError::Parse { message, .. } = &errors[0] {
+            assert!(message.contains("fita") || message.contains("mestre"));
         }
     }
 }

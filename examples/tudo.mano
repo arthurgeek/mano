@@ -167,6 +167,68 @@ salve cnt();  // 2
 olhaEssaFita aplica(fn, x) { toma fn(x); }
 salve aplica(olhaEssaFita (n) { toma n * n; }, 5);  // 25
 
+// === Classes ===
+bagulho Pessoa {
+    bora(nome) {
+        oCara.nome = nome;
+    }
+
+    falar() {
+        salve "Oi, eu sou " + oCara.nome;
+    }
+}
+
+seLiga p = Pessoa("João");
+p.falar();
+
+// === Herança ===
+bagulho Animal {
+    falar() { salve "..."; }
+}
+
+bagulho Cachorro < Animal {
+    falar() { salve "Au au!"; }
+}
+
+bagulho Gato < Animal {
+    falar() { salve "Miau!"; }
+}
+
+seLiga rex = Cachorro();
+seLiga mimi = Gato();
+rex.falar();
+mimi.falar();
+
+// === Mestre (super) ===
+bagulho Sonho {
+    preparar() { salve "Frita até dourar."; }
+}
+
+bagulho SonhoDeCreme < Sonho {
+    preparar() {
+        mestre.preparar();  // Chama o método do coroa
+        salve "Enche de creme.";
+    }
+}
+
+seLiga doce = SonhoDeCreme();
+doce.preparar();
+
+// === Getters ===
+bagulho Circulo {
+    bora(raio) { oCara.raio = raio; }
+    area { toma 3.14159 * oCara.raio * oCara.raio; }
+}
+
+seLiga c = Circulo(5);
+salve c.area;
+
+// === Métodos estáticos ===
+bagulho Math {
+    bagulho dobrar(x) { toma x * 2; }
+}
+salve Math.dobrar(21);
+
 /*
    Comentário de bloco
    Pode ter várias linhas

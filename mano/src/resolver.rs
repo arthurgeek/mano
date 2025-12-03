@@ -19,11 +19,12 @@ enum FunctionType {
     Initializer,
 }
 
-/// Tracks class context for validation (this/oCara usage)
+/// Tracks class context for validation (this/oCara and super/mestre usage)
 #[derive(Clone, Copy, PartialEq)]
 enum ClassType {
     None,
     Class,
+    Subclass,
     StaticMethod,
 }
 
@@ -214,12 +215,50 @@ impl Resolver {
                 self.resolve_stmt(body);
             }
             Stmt::Break { .. } => {}
-            Stmt::Class { name, methods, .. } => {
+            Stmt::Class {
+                name,
+                superclass,
+                methods,
+                ..
+            } => {
                 self.declare(name);
                 self.define(name);
 
                 let enclosing_class = self.current_class;
-                self.current_class = ClassType::Class;
+
+                // Resolve superclass if present
+                if let Some(superclass_expr) = superclass {
+                    // Check for self-inheritance
+                    if let Expr::Variable {
+                        name: superclass_name,
+                    } = superclass_expr.as_ref()
+                        && superclass_name.lexeme == name.lexeme
+                    {
+                        self.errors.push(ManoError::Resolution {
+                            message: "Não dá pra ser cria de si mesmo, mano!".to_string(),
+                            span: superclass_name.span.clone(),
+                        });
+                    }
+                    self.resolve_expr(superclass_expr);
+
+                    self.current_class = ClassType::Subclass;
+
+                    // Create a scope for "mestre" that wraps oCara and methods
+                    self.begin_scope();
+                    if let Some(scope) = self.scopes.last_mut() {
+                        scope.insert(
+                            "mestre".to_string(),
+                            VarInfo {
+                                defined: true,
+                                used: true, // Don't warn about unused mestre
+                                span: name.span.clone(),
+                                slot: 0,
+                            },
+                        );
+                    }
+                } else {
+                    self.current_class = ClassType::Class;
+                }
 
                 // Create a scope for "oCara" that wraps all methods
                 self.begin_scope();
@@ -265,7 +304,13 @@ impl Resolver {
                     }
                 }
 
-                self.end_scope();
+                self.end_scope(); // oCara scope
+
+                // Close mestre scope if we created one
+                if superclass.is_some() {
+                    self.end_scope();
+                }
+
                 self.current_class = enclosing_class;
             }
         }
@@ -377,6 +422,22 @@ impl Resolver {
                 } else if self.current_class == ClassType::StaticMethod {
                     self.errors.push(ManoError::Resolution {
                         message: "E aí, mano? Não pode usar 'oCara' em fita estática!".to_string(),
+                        span: keyword.span.clone(),
+                    });
+                }
+                self.resolve_local(keyword);
+            }
+            Expr::Super { keyword, .. } => {
+                if self.current_class == ClassType::None {
+                    self.errors.push(ManoError::Resolution {
+                        message: "E aí, mano? Não pode usar 'mestre' fora de um bagulho!"
+                            .to_string(),
+                        span: keyword.span.clone(),
+                    });
+                } else if self.current_class == ClassType::Class {
+                    self.errors.push(ManoError::Resolution {
+                        message: "E aí, mano? Não pode usar 'mestre' num bagulho sem coroa!"
+                            .to_string(),
                         span: keyword.span.clone(),
                     });
                 }
@@ -1689,6 +1750,7 @@ mod tests {
                 literal: None,
                 span: 8..14,
             },
+            superclass: None,
             methods: vec![Stmt::Function {
                 name: Token {
                     token_type: TokenType::Identifier,
@@ -1740,6 +1802,7 @@ mod tests {
                     literal: None,
                     span: 8..14,
                 },
+                superclass: None,
                 methods: vec![],
                 span: 0..17,
             },
@@ -1750,6 +1813,7 @@ mod tests {
                     literal: None,
                     span: 26..32,
                 },
+                superclass: None,
                 methods: vec![],
                 span: 18..35,
             },
@@ -1870,6 +1934,7 @@ mod tests {
                 literal: None,
                 span: 8..14,
             },
+            superclass: None,
             methods: vec![Stmt::Function {
                 name: Token {
                     token_type: TokenType::Identifier,
@@ -1980,6 +2045,7 @@ mod tests {
                 literal: None,
                 span: 8..14,
             },
+            superclass: None,
             methods: vec![Stmt::Function {
                 name: Token {
                     token_type: TokenType::Identifier,
@@ -2018,5 +2084,274 @@ mod tests {
         assert!(errors.iter().any(
             |e| matches!(e, ManoError::Resolution { message, .. } if message.contains("oCara"))
         ));
+    }
+
+    #[test]
+    fn resolver_errors_on_class_inheriting_from_itself() {
+        // bagulho Foo < Foo { }
+        let resolver = Resolver::new();
+        let stmts = vec![Stmt::Class {
+            name: Token {
+                token_type: TokenType::Identifier,
+                lexeme: "Foo".to_string(),
+                literal: None,
+                span: 8..11,
+            },
+            superclass: Some(Box::new(Expr::Variable {
+                name: Token {
+                    token_type: TokenType::Identifier,
+                    lexeme: "Foo".to_string(),
+                    literal: None,
+                    span: 14..17,
+                },
+            })),
+            methods: vec![],
+            span: 0..20,
+        }];
+
+        let result = resolver.resolve(&stmts);
+        assert!(
+            result.is_err(),
+            "should error when class inherits from itself"
+        );
+        let errors = result.unwrap_err();
+        assert_eq!(errors.len(), 1);
+        assert!(
+            matches!(&errors[0], ManoError::Resolution { message, .. } if message.contains("cria de si mesmo"))
+        );
+    }
+
+    // === mestre (super) tests ===
+
+    #[test]
+    fn resolver_errors_on_super_outside_class() {
+        // mestre.falar();
+        let resolver = Resolver::new();
+        let stmts = vec![Stmt::Expression {
+            expression: Expr::Super {
+                keyword: Token {
+                    token_type: TokenType::Super,
+                    lexeme: "mestre".to_string(),
+                    literal: None,
+                    span: 0..6,
+                },
+                method: Token {
+                    token_type: TokenType::Identifier,
+                    lexeme: "falar".to_string(),
+                    literal: None,
+                    span: 7..12,
+                },
+            },
+            span: 0..14,
+        }];
+
+        let result = resolver.resolve(&stmts);
+        assert!(result.is_err(), "should error on mestre outside class");
+        let errors = result.unwrap_err();
+        assert!(errors.iter().any(
+            |e| matches!(e, ManoError::Resolution { message, .. } if message.contains("mestre"))
+        ));
+    }
+
+    #[test]
+    fn resolver_errors_on_super_in_class_without_superclass() {
+        // bagulho Foo { test() { mestre.bar(); } }
+        let resolver = Resolver::new();
+        let stmts = vec![Stmt::Class {
+            name: Token {
+                token_type: TokenType::Identifier,
+                lexeme: "Foo".to_string(),
+                literal: None,
+                span: 8..11,
+            },
+            superclass: None,
+            methods: vec![Stmt::Function {
+                name: Token {
+                    token_type: TokenType::Identifier,
+                    lexeme: "test".to_string(),
+                    literal: None,
+                    span: 14..18,
+                },
+                params: vec![],
+                body: vec![Stmt::Expression {
+                    expression: Expr::Super {
+                        keyword: Token {
+                            token_type: TokenType::Super,
+                            lexeme: "mestre".to_string(),
+                            literal: None,
+                            span: 24..30,
+                        },
+                        method: Token {
+                            token_type: TokenType::Identifier,
+                            lexeme: "bar".to_string(),
+                            literal: None,
+                            span: 31..34,
+                        },
+                    },
+                    span: 24..37,
+                }],
+                is_static: false,
+                is_getter: false,
+                span: 14..40,
+            }],
+            span: 0..45,
+        }];
+
+        let result = resolver.resolve(&stmts);
+        assert!(
+            result.is_err(),
+            "should error on mestre in class without superclass"
+        );
+        let errors = result.unwrap_err();
+        assert!(errors.iter().any(
+            |e| matches!(e, ManoError::Resolution { message, .. } if message.contains("mestre"))
+        ));
+    }
+
+    #[test]
+    fn resolver_allows_super_in_subclass() {
+        // bagulho Pai { } bagulho Filho < Pai { test() { mestre.foo(); } }
+        let resolver = Resolver::new();
+        let stmts = vec![
+            Stmt::Class {
+                name: Token {
+                    token_type: TokenType::Identifier,
+                    lexeme: "Pai".to_string(),
+                    literal: None,
+                    span: 8..11,
+                },
+                superclass: None,
+                methods: vec![],
+                span: 0..14,
+            },
+            Stmt::Class {
+                name: Token {
+                    token_type: TokenType::Identifier,
+                    lexeme: "Filho".to_string(),
+                    literal: None,
+                    span: 23..28,
+                },
+                superclass: Some(Box::new(Expr::Variable {
+                    name: Token {
+                        token_type: TokenType::Identifier,
+                        lexeme: "Pai".to_string(),
+                        literal: None,
+                        span: 31..34,
+                    },
+                })),
+                methods: vec![Stmt::Function {
+                    name: Token {
+                        token_type: TokenType::Identifier,
+                        lexeme: "test".to_string(),
+                        literal: None,
+                        span: 37..41,
+                    },
+                    params: vec![],
+                    body: vec![Stmt::Expression {
+                        expression: Expr::Super {
+                            keyword: Token {
+                                token_type: TokenType::Super,
+                                lexeme: "mestre".to_string(),
+                                literal: None,
+                                span: 47..53,
+                            },
+                            method: Token {
+                                token_type: TokenType::Identifier,
+                                lexeme: "foo".to_string(),
+                                literal: None,
+                                span: 54..57,
+                            },
+                        },
+                        span: 47..60,
+                    }],
+                    is_static: false,
+                    is_getter: false,
+                    span: 37..63,
+                }],
+                span: 15..66,
+            },
+        ];
+
+        let result = resolver.resolve(&stmts);
+        assert!(
+            result.is_ok(),
+            "should allow mestre in subclass: {:?}",
+            result.unwrap_err()
+        );
+    }
+
+    #[test]
+    fn resolver_resolves_super_to_correct_distance() {
+        // bagulho Pai { } bagulho Filho < Pai { test() { mestre.foo(); } }
+        // mestre should resolve to the scope just outside the oCara scope
+        let resolver = Resolver::new();
+        let stmts = vec![
+            Stmt::Class {
+                name: Token {
+                    token_type: TokenType::Identifier,
+                    lexeme: "Pai".to_string(),
+                    literal: None,
+                    span: 8..11,
+                },
+                superclass: None,
+                methods: vec![],
+                span: 0..14,
+            },
+            Stmt::Class {
+                name: Token {
+                    token_type: TokenType::Identifier,
+                    lexeme: "Filho".to_string(),
+                    literal: None,
+                    span: 23..28,
+                },
+                superclass: Some(Box::new(Expr::Variable {
+                    name: Token {
+                        token_type: TokenType::Identifier,
+                        lexeme: "Pai".to_string(),
+                        literal: None,
+                        span: 31..34,
+                    },
+                })),
+                methods: vec![Stmt::Function {
+                    name: Token {
+                        token_type: TokenType::Identifier,
+                        lexeme: "test".to_string(),
+                        literal: None,
+                        span: 37..41,
+                    },
+                    params: vec![],
+                    body: vec![Stmt::Expression {
+                        expression: Expr::Super {
+                            keyword: Token {
+                                token_type: TokenType::Super,
+                                lexeme: "mestre".to_string(),
+                                literal: None,
+                                span: 47..53,
+                            },
+                            method: Token {
+                                token_type: TokenType::Identifier,
+                                lexeme: "foo".to_string(),
+                                literal: None,
+                                span: 54..57,
+                            },
+                        },
+                        span: 47..60,
+                    }],
+                    is_static: false,
+                    is_getter: false,
+                    span: 37..63,
+                }],
+                span: 15..66,
+            },
+        ];
+
+        let result = resolver.resolve(&stmts);
+        assert!(result.is_ok());
+        let resolutions = result.unwrap();
+        // mestre at 47..53 should resolve to distance 2:
+        // - method scope (params)
+        // - oCara scope
+        // - mestre scope <- here
+        assert_eq!(resolutions.get(&(47..53)), Some(&(2, 0)));
     }
 }

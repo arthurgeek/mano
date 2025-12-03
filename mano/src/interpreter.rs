@@ -161,11 +161,50 @@ impl Interpreter {
                 };
                 Err(ManoError::Return(return_value))
             }
-            Stmt::Class { name, methods, .. } => {
+            Stmt::Class {
+                name,
+                superclass,
+                methods,
+                ..
+            } => {
+                // Evaluate superclass if present
+                let superclass_value = if let Some(superclass_expr) = superclass {
+                    // Parser guarantees superclass is always Expr::Variable
+                    let Expr::Variable { name: sc_name } = superclass_expr.as_ref() else {
+                        unreachable!("Parser always produces Expr::Variable for superclass")
+                    };
+                    let superclass_span = sc_name.span.clone();
+
+                    let value = self.interpret(superclass_expr, output)?;
+                    match value {
+                        Value::Class(class) => Some(class),
+                        _ => {
+                            return Err(ManoError::Runtime {
+                                message: "Só bagulho pode ser coroa, mano!".to_string(),
+                                span: superclass_span,
+                            });
+                        }
+                    }
+                } else {
+                    None
+                };
+
                 // Define class name (with nil initially)
                 self.environment
                     .borrow_mut()
                     .define(name.lexeme.clone(), Value::Literal(Literal::Nil));
+
+                // If there's a superclass, create an environment with "mestre"
+                // that will be the closure for all methods
+                let method_closure = if let Some(ref superclass) = superclass_value {
+                    let mut mestre_env = Environment::with_enclosing(Rc::clone(&self.environment));
+                    // Use define_at_slot so get_at works (resolver uses slot-based resolution)
+                    mestre_env
+                        .define_at_slot("mestre".to_string(), Value::Class(Rc::clone(superclass)));
+                    Rc::new(RefCell::new(mestre_env))
+                } else {
+                    Rc::clone(&self.environment)
+                };
 
                 // Create class (separate static and instance methods)
                 let mut method_map = HashMap::new();
@@ -184,7 +223,7 @@ impl Interpreter {
                             name: Some(method_name.clone()),
                             params: params.clone(),
                             body: body.clone(),
-                            closure: Rc::clone(&self.environment),
+                            closure: Rc::clone(&method_closure),
                             is_getter: *is_getter,
                         };
                         if *is_static {
@@ -202,6 +241,7 @@ impl Interpreter {
                 }
                 let class = Class {
                     name: name.lexeme.clone(),
+                    superclass: superclass_value,
                     methods: method_map,
                     static_methods: static_method_map,
                 };
@@ -498,9 +538,9 @@ impl Interpreter {
                             return Ok(value.clone());
                         }
 
-                        // Then check methods on the class (bind to instance)
+                        // Then check methods on the class (and superclass chain)
                         // Note: static methods are NOT accessible on instances
-                        let method = instance.class.methods.get(&name.lexeme).cloned();
+                        let method = instance.class.find_method(&name.lexeme);
                         if let Some(method) = method {
                             if let Function::Mano(func) = method.as_ref() {
                                 let bound = func.bind(Rc::clone(&instance));
@@ -519,8 +559,8 @@ impl Interpreter {
                         })
                     }
                     Value::Class(class) => {
-                        // Static methods are accessible on class itself
-                        if let Some(method) = class.static_methods.get(&name.lexeme).cloned() {
+                        // Static methods are accessible on class itself (and superclass chain)
+                        if let Some(method) = class.find_static_method(&name.lexeme) {
                             return Ok(Value::Function(method));
                         }
 
@@ -573,6 +613,51 @@ impl Interpreter {
                     // Unresolved = must be global (shouldn't happen for oCara)
                     self.globals.borrow().get("oCara", keyword.span.clone())
                 }
+            }
+            Expr::Super { keyword, method } => {
+                // Look up the superclass from the resolved distance
+                // Resolver guarantees mestre is resolved when we get here
+                let (distance, slot) = self
+                    .resolutions
+                    .get(&keyword.span)
+                    .expect("Resolver should have resolved mestre");
+
+                // Get mestre (superclass) from resolved location
+                // Resolver validates mestre exists and is a class
+                let Value::Class(superclass) = self
+                    .environment
+                    .borrow()
+                    .get_at(*distance, *slot)
+                    .expect("Resolver validated mestre exists in scope")
+                else {
+                    unreachable!("Resolver validated mestre is a class")
+                };
+
+                // Get "oCara" from one level closer (inside the mestre scope)
+                // oCara is always at slot 0, one scope inside mestre
+                let Value::Instance(object) = self
+                    .environment
+                    .borrow()
+                    .get_at(distance - 1, 0)
+                    .expect("oCara exists in method scope")
+                else {
+                    unreachable!("oCara is always an Instance in method context")
+                };
+
+                // Find the method in the superclass
+                let method_func =
+                    superclass
+                        .find_method(&method.lexeme)
+                        .ok_or_else(|| ManoError::Runtime {
+                            message: format!(
+                                "Fita '{}' não existe no mestre, mano!",
+                                method.lexeme
+                            ),
+                            span: method.span.clone(),
+                        })?;
+
+                // Bind the method to "oCara"
+                Ok(Value::Function(Rc::new(method_func.bind(object))))
             }
         }
     }
@@ -2660,6 +2745,7 @@ mod tests {
                 literal: None,
                 span: 8..14,
             },
+            superclass: None,
             methods: vec![],
             span: 0..17,
         };
@@ -2685,6 +2771,7 @@ mod tests {
                 literal: None,
                 span: 8..13,
             },
+            superclass: None,
             methods: vec![],
             span: 0..16,
         };
@@ -2720,6 +2807,7 @@ mod tests {
                 literal: None,
                 span: 8..14,
             },
+            superclass: None,
             methods: vec![Stmt::Function {
                 name: Token {
                     token_type: TokenType::Identifier,
@@ -2758,6 +2846,7 @@ mod tests {
                 literal: None,
                 span: 0..6,
             },
+            superclass: None,
             methods: vec![],
             span: 0..20,
         };
@@ -2799,6 +2888,7 @@ mod tests {
                 literal: None,
                 span: 0..6,
             },
+            superclass: None,
             methods: vec![],
             span: 0..20,
         };
@@ -2872,6 +2962,7 @@ mod tests {
                 literal: None,
                 span: 0..6,
             },
+            superclass: None,
             methods: vec![],
             span: 0..20,
         };
@@ -2965,6 +3056,7 @@ mod tests {
                 literal: None,
                 span: 0..6,
             },
+            superclass: None,
             methods: vec![],
             span: 0..20,
         };
@@ -3033,6 +3125,7 @@ mod tests {
                 literal: None,
                 span: 0..6,
             },
+            superclass: None,
             methods: vec![],
             span: 0..20,
         };
@@ -3123,6 +3216,7 @@ mod tests {
                 literal: None,
                 span: 0..6,
             },
+            superclass: None,
             methods: vec![Stmt::Function {
                 name: Token {
                     token_type: TokenType::Identifier,
@@ -3214,6 +3308,7 @@ mod tests {
                 literal: None,
                 span: 0..6,
             },
+            superclass: None,
             methods: vec![Stmt::Function {
                 name: Token {
                     token_type: TokenType::Identifier,
@@ -3303,6 +3398,7 @@ mod tests {
         // Create an instance to be "oCara"
         let class = Rc::new(Class {
             name: "Pessoa".to_string(),
+            superclass: None,
             methods: HashMap::new(),
             static_methods: HashMap::new(),
         });
@@ -3340,6 +3436,7 @@ mod tests {
         // Create instance and put in globals as "oCara"
         let class = Rc::new(Class {
             name: "Test".to_string(),
+            superclass: None,
             methods: HashMap::new(),
             static_methods: HashMap::new(),
         });
@@ -3414,6 +3511,7 @@ mod tests {
 
         let class = Rc::new(Class {
             name: "TestClass".to_string(),
+            superclass: None,
             methods,
             static_methods: HashMap::new(),
         });
@@ -3472,6 +3570,7 @@ mod tests {
 
         let class = Rc::new(Class {
             name: "TestClass".to_string(),
+            superclass: None,
             methods,
             static_methods: HashMap::new(),
         });
@@ -3525,6 +3624,7 @@ mod tests {
                 literal: None,
                 span: 0..4,
             },
+            superclass: None,
             methods: vec![Stmt::Function {
                 name: Token {
                     token_type: TokenType::Identifier,
@@ -3643,6 +3743,7 @@ mod tests {
                 literal: None,
                 span: 0..4,
             },
+            superclass: None,
             methods: vec![Stmt::Function {
                 name: Token {
                     token_type: TokenType::Identifier,
@@ -3740,6 +3841,7 @@ mod tests {
                 literal: None,
                 span: 0..6,
             },
+            superclass: None,
             methods: vec![Stmt::Function {
                 name: Token {
                     token_type: TokenType::Identifier,
@@ -3833,6 +3935,7 @@ mod tests {
                 literal: None,
                 span: 0..4,
             },
+            superclass: None,
             methods: vec![Stmt::Function {
                 name: Token {
                     token_type: TokenType::Identifier,
@@ -3874,5 +3977,492 @@ mod tests {
             assert!(message.contains("multiplica"));
             assert!(message.contains("Math"));
         }
+    }
+
+    // === inheritance ===
+
+    #[test]
+    fn class_with_superclass_stores_parent() {
+        // bagulho Pai { }
+        // bagulho Filho < Pai { }
+        let mut interpreter = Interpreter::new();
+        let mut output = Vec::new();
+
+        // Define parent class
+        let parent_decl = Stmt::Class {
+            name: Token {
+                token_type: TokenType::Identifier,
+                lexeme: "Pai".to_string(),
+                literal: None,
+                span: 0..3,
+            },
+            superclass: None,
+            methods: vec![],
+            span: 0..10,
+        };
+        interpreter.execute(&parent_decl, &mut output).unwrap();
+
+        // Define child class with superclass
+        let child_decl = Stmt::Class {
+            name: Token {
+                token_type: TokenType::Identifier,
+                lexeme: "Filho".to_string(),
+                literal: None,
+                span: 15..20,
+            },
+            superclass: Some(Box::new(Expr::Variable {
+                name: Token {
+                    token_type: TokenType::Identifier,
+                    lexeme: "Pai".to_string(),
+                    literal: None,
+                    span: 23..26,
+                },
+            })),
+            methods: vec![],
+            span: 15..35,
+        };
+        interpreter.execute(&child_decl, &mut output).unwrap();
+
+        // Verify child class has superclass
+        let child_value = interpreter.environment.borrow().get("Filho", 0..5).unwrap();
+        if let Value::Class(class) = child_value {
+            assert!(class.superclass.is_some());
+            assert_eq!(class.superclass.as_ref().unwrap().name, "Pai");
+        } else {
+            panic!("Expected class value");
+        }
+    }
+
+    #[test]
+    fn inheriting_from_non_class_errors() {
+        // seLiga notAClass = "treta";
+        // bagulho Foo < notAClass { } -> error
+        let mut interpreter = Interpreter::new();
+        let mut output = Vec::new();
+
+        // Define a non-class variable
+        let var_decl = Stmt::Var {
+            name: Token {
+                token_type: TokenType::Identifier,
+                lexeme: "notAClass".to_string(),
+                literal: None,
+                span: 0..9,
+            },
+            initializer: Some(Expr::Literal {
+                value: Literal::String("treta".to_string()),
+            }),
+            span: 0..20,
+        };
+        interpreter.execute(&var_decl, &mut output).unwrap();
+
+        // Try to inherit from non-class
+        let class_decl = Stmt::Class {
+            name: Token {
+                token_type: TokenType::Identifier,
+                lexeme: "Foo".to_string(),
+                literal: None,
+                span: 25..28,
+            },
+            superclass: Some(Box::new(Expr::Variable {
+                name: Token {
+                    token_type: TokenType::Identifier,
+                    lexeme: "notAClass".to_string(),
+                    literal: None,
+                    span: 31..40,
+                },
+            })),
+            methods: vec![],
+            span: 25..45,
+        };
+        let result = interpreter.execute(&class_decl, &mut output);
+
+        assert!(matches!(result, Err(ManoError::Runtime { .. })));
+        if let Err(ManoError::Runtime { message, .. }) = result {
+            assert!(message.contains("bagulho") || message.contains("coroa"));
+        }
+    }
+
+    #[test]
+    fn subclass_inherits_methods_from_superclass() {
+        // bagulho Pai { falar() { toma "oi do pai"; } }
+        // bagulho Filho < Pai { }
+        // seLiga f = Filho();
+        // f.falar() -> "oi do pai"
+        let mut interpreter = Interpreter::new();
+        let mut output = Vec::new();
+
+        // Define parent class with a method
+        let parent_decl = Stmt::Class {
+            name: Token {
+                token_type: TokenType::Identifier,
+                lexeme: "Pai".to_string(),
+                literal: None,
+                span: 0..3,
+            },
+            superclass: None,
+            methods: vec![Stmt::Function {
+                name: Token {
+                    token_type: TokenType::Identifier,
+                    lexeme: "falar".to_string(),
+                    literal: None,
+                    span: 10..15,
+                },
+                params: vec![],
+                body: vec![Stmt::Return {
+                    keyword: Token {
+                        token_type: TokenType::Return,
+                        lexeme: "toma".to_string(),
+                        literal: None,
+                        span: 20..24,
+                    },
+                    value: Some(Expr::Literal {
+                        value: Literal::String("oi do pai".to_string()),
+                    }),
+                    span: 20..35,
+                }],
+                is_static: false,
+                is_getter: false,
+                span: 10..40,
+            }],
+            span: 0..45,
+        };
+        interpreter.execute(&parent_decl, &mut output).unwrap();
+
+        // Define child class that inherits from parent
+        let child_decl = Stmt::Class {
+            name: Token {
+                token_type: TokenType::Identifier,
+                lexeme: "Filho".to_string(),
+                literal: None,
+                span: 50..55,
+            },
+            superclass: Some(Box::new(Expr::Variable {
+                name: Token {
+                    token_type: TokenType::Identifier,
+                    lexeme: "Pai".to_string(),
+                    literal: None,
+                    span: 58..61,
+                },
+            })),
+            methods: vec![],
+            span: 50..70,
+        };
+        interpreter.execute(&child_decl, &mut output).unwrap();
+
+        // Create instance: seLiga f = Filho();
+        let var_decl = Stmt::Var {
+            name: Token {
+                token_type: TokenType::Identifier,
+                lexeme: "f".to_string(),
+                literal: None,
+                span: 75..76,
+            },
+            initializer: Some(Expr::Call {
+                callee: Box::new(Expr::Variable {
+                    name: Token {
+                        token_type: TokenType::Identifier,
+                        lexeme: "Filho".to_string(),
+                        literal: None,
+                        span: 79..84,
+                    },
+                }),
+                paren: Token {
+                    token_type: TokenType::RightParen,
+                    lexeme: ")".to_string(),
+                    literal: None,
+                    span: 86..87,
+                },
+                arguments: vec![],
+            }),
+            span: 75..88,
+        };
+        interpreter.execute(&var_decl, &mut output).unwrap();
+
+        // Call inherited method: f.falar()
+        let call_expr = Expr::Call {
+            callee: Box::new(Expr::Get {
+                object: Box::new(Expr::Variable {
+                    name: Token {
+                        token_type: TokenType::Identifier,
+                        lexeme: "f".to_string(),
+                        literal: None,
+                        span: 90..91,
+                    },
+                }),
+                name: Token {
+                    token_type: TokenType::Identifier,
+                    lexeme: "falar".to_string(),
+                    literal: None,
+                    span: 92..97,
+                },
+            }),
+            paren: Token {
+                token_type: TokenType::RightParen,
+                lexeme: ")".to_string(),
+                literal: None,
+                span: 99..100,
+            },
+            arguments: vec![],
+        };
+
+        let result = interpreter.interpret(&call_expr, &mut output).unwrap();
+        assert_eq!(
+            result,
+            Value::Literal(Literal::String("oi do pai".to_string()))
+        );
+    }
+
+    #[test]
+    fn subclass_method_overrides_superclass() {
+        // bagulho Pai { falar() { toma "oi do pai"; } }
+        // bagulho Filho < Pai { falar() { toma "oi do filho"; } }
+        // seLiga f = Filho();
+        // f.falar() -> "oi do filho"  (override!)
+        let mut interpreter = Interpreter::new();
+        let mut output = Vec::new();
+
+        // Define parent class with a method
+        let parent_decl = Stmt::Class {
+            name: Token {
+                token_type: TokenType::Identifier,
+                lexeme: "Pai".to_string(),
+                literal: None,
+                span: 0..3,
+            },
+            superclass: None,
+            methods: vec![Stmt::Function {
+                name: Token {
+                    token_type: TokenType::Identifier,
+                    lexeme: "falar".to_string(),
+                    literal: None,
+                    span: 10..15,
+                },
+                params: vec![],
+                body: vec![Stmt::Return {
+                    keyword: Token {
+                        token_type: TokenType::Return,
+                        lexeme: "toma".to_string(),
+                        literal: None,
+                        span: 20..24,
+                    },
+                    value: Some(Expr::Literal {
+                        value: Literal::String("oi do pai".to_string()),
+                    }),
+                    span: 20..35,
+                }],
+                is_static: false,
+                is_getter: false,
+                span: 10..40,
+            }],
+            span: 0..45,
+        };
+        interpreter.execute(&parent_decl, &mut output).unwrap();
+
+        // Define child class with override method
+        let child_decl = Stmt::Class {
+            name: Token {
+                token_type: TokenType::Identifier,
+                lexeme: "Filho".to_string(),
+                literal: None,
+                span: 50..55,
+            },
+            superclass: Some(Box::new(Expr::Variable {
+                name: Token {
+                    token_type: TokenType::Identifier,
+                    lexeme: "Pai".to_string(),
+                    literal: None,
+                    span: 58..61,
+                },
+            })),
+            methods: vec![Stmt::Function {
+                name: Token {
+                    token_type: TokenType::Identifier,
+                    lexeme: "falar".to_string(), // Same method name = override
+                    literal: None,
+                    span: 70..75,
+                },
+                params: vec![],
+                body: vec![Stmt::Return {
+                    keyword: Token {
+                        token_type: TokenType::Return,
+                        lexeme: "toma".to_string(),
+                        literal: None,
+                        span: 80..84,
+                    },
+                    value: Some(Expr::Literal {
+                        value: Literal::String("oi do filho".to_string()),
+                    }),
+                    span: 80..95,
+                }],
+                is_static: false,
+                is_getter: false,
+                span: 70..100,
+            }],
+            span: 50..105,
+        };
+        interpreter.execute(&child_decl, &mut output).unwrap();
+
+        // Create instance: seLiga f = Filho();
+        let var_decl = Stmt::Var {
+            name: Token {
+                token_type: TokenType::Identifier,
+                lexeme: "f".to_string(),
+                literal: None,
+                span: 110..111,
+            },
+            initializer: Some(Expr::Call {
+                callee: Box::new(Expr::Variable {
+                    name: Token {
+                        token_type: TokenType::Identifier,
+                        lexeme: "Filho".to_string(),
+                        literal: None,
+                        span: 114..119,
+                    },
+                }),
+                paren: Token {
+                    token_type: TokenType::RightParen,
+                    lexeme: ")".to_string(),
+                    literal: None,
+                    span: 121..122,
+                },
+                arguments: vec![],
+            }),
+            span: 110..123,
+        };
+        interpreter.execute(&var_decl, &mut output).unwrap();
+
+        // Call overridden method: f.falar()
+        let call_expr = Expr::Call {
+            callee: Box::new(Expr::Get {
+                object: Box::new(Expr::Variable {
+                    name: Token {
+                        token_type: TokenType::Identifier,
+                        lexeme: "f".to_string(),
+                        literal: None,
+                        span: 125..126,
+                    },
+                }),
+                name: Token {
+                    token_type: TokenType::Identifier,
+                    lexeme: "falar".to_string(),
+                    literal: None,
+                    span: 127..132,
+                },
+            }),
+            paren: Token {
+                token_type: TokenType::RightParen,
+                lexeme: ")".to_string(),
+                literal: None,
+                span: 134..135,
+            },
+            arguments: vec![],
+        };
+
+        let result = interpreter.interpret(&call_expr, &mut output).unwrap();
+        // Should get child's version, not parent's
+        assert_eq!(
+            result,
+            Value::Literal(Literal::String("oi do filho".to_string()))
+        );
+    }
+
+    #[test]
+    fn subclass_inherits_static_methods_from_superclass() {
+        // bagulho Pai { bagulho cumprimentar() { toma "oi do pai"; } }
+        // bagulho Filho < Pai { }
+        // Filho.cumprimentar() -> "oi do pai"
+        let mut interpreter = Interpreter::new();
+        let mut output = Vec::new();
+
+        // Define parent class with a static method
+        let parent_decl = Stmt::Class {
+            name: Token {
+                token_type: TokenType::Identifier,
+                lexeme: "Pai".to_string(),
+                literal: None,
+                span: 0..3,
+            },
+            superclass: None,
+            methods: vec![Stmt::Function {
+                name: Token {
+                    token_type: TokenType::Identifier,
+                    lexeme: "cumprimentar".to_string(),
+                    literal: None,
+                    span: 10..22,
+                },
+                params: vec![],
+                body: vec![Stmt::Return {
+                    keyword: Token {
+                        token_type: TokenType::Return,
+                        lexeme: "toma".to_string(),
+                        literal: None,
+                        span: 30..34,
+                    },
+                    value: Some(Expr::Literal {
+                        value: Literal::String("oi do pai".to_string()),
+                    }),
+                    span: 30..45,
+                }],
+                is_static: true, // Static method!
+                is_getter: false,
+                span: 10..50,
+            }],
+            span: 0..55,
+        };
+        interpreter.execute(&parent_decl, &mut output).unwrap();
+
+        // Define child class (no methods)
+        let child_decl = Stmt::Class {
+            name: Token {
+                token_type: TokenType::Identifier,
+                lexeme: "Filho".to_string(),
+                literal: None,
+                span: 60..65,
+            },
+            superclass: Some(Box::new(Expr::Variable {
+                name: Token {
+                    token_type: TokenType::Identifier,
+                    lexeme: "Pai".to_string(),
+                    literal: None,
+                    span: 68..71,
+                },
+            })),
+            methods: vec![],
+            span: 60..80,
+        };
+        interpreter.execute(&child_decl, &mut output).unwrap();
+
+        // Call inherited static method: Filho.cumprimentar()
+        let call_expr = Expr::Call {
+            callee: Box::new(Expr::Get {
+                object: Box::new(Expr::Variable {
+                    name: Token {
+                        token_type: TokenType::Identifier,
+                        lexeme: "Filho".to_string(),
+                        literal: None,
+                        span: 85..90,
+                    },
+                }),
+                name: Token {
+                    token_type: TokenType::Identifier,
+                    lexeme: "cumprimentar".to_string(),
+                    literal: None,
+                    span: 91..103,
+                },
+            }),
+            paren: Token {
+                token_type: TokenType::RightParen,
+                lexeme: ")".to_string(),
+                literal: None,
+                span: 105..106,
+            },
+            arguments: vec![],
+        };
+
+        let result = interpreter.interpret(&call_expr, &mut output).unwrap();
+        assert_eq!(
+            result,
+            Value::Literal(Literal::String("oi do pai".to_string()))
+        );
     }
 }

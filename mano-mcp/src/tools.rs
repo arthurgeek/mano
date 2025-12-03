@@ -62,6 +62,32 @@ mano is a programming language where all keywords are mano slang.
 | break | `saiFora` | `saiFora;` |
 | and | `tamoJunto` | `firmeza tamoJunto firmeza` |
 | or | `ow` | `treta ow firmeza` |
+| function | `olhaEssaFita` | `olhaEssaFita soma(a, b) { toma a + b; }` |
+| return | `toma` | `toma x * 2;` |
+| class | `bagulho` | `bagulho Pessoa { }` |
+| this | `oCara` | `oCara.nome = "João";` |
+| super | `mestre` | `mestre.metodo();` |
+
+## Classes and Inheritance
+
+```mano
+// Define a class
+bagulho Animal {
+    falar() { salve "..."; }
+}
+
+// Inheritance with <
+bagulho Cachorro < Animal {
+    falar() { salve "Au au!"; }
+    latir() { mestre.falar(); }  // Call superclass method
+}
+
+// Constructor is called "bora"
+bagulho Pessoa {
+    bora(nome) { oCara.nome = nome; }
+}
+seLiga p = Pessoa("João");
+```
 
 ## Operators
 

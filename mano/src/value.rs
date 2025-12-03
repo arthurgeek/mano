@@ -21,6 +21,17 @@ pub enum Function {
     Native(NativeFunction),
 }
 
+impl Function {
+    /// Bind this function to an instance (for method calls).
+    /// Only ManoFunctions can be bound - native functions are never class methods.
+    pub fn bind(&self, instance: Rc<Instance>) -> Function {
+        let Function::Mano(f) = self else {
+            unreachable!("Native functions are never class methods")
+        };
+        Function::Mano(f.bind(instance))
+    }
+}
+
 pub struct NativeFunction {
     pub name: String,
     pub arity: usize,
@@ -63,8 +74,41 @@ impl ManoFunction {
 #[derive(Debug)]
 pub struct Class {
     pub name: String,
+    pub superclass: Option<Rc<Class>>,
     pub methods: HashMap<String, Rc<Function>>,
     pub static_methods: HashMap<String, Rc<Function>>,
+}
+
+impl Class {
+    /// Find a method in this class or its superclass chain
+    pub fn find_method(&self, name: &str) -> Option<Rc<Function>> {
+        // First check this class
+        if let Some(method) = self.methods.get(name) {
+            return Some(Rc::clone(method));
+        }
+
+        // Then check superclass chain
+        if let Some(ref superclass) = self.superclass {
+            return superclass.find_method(name);
+        }
+
+        None
+    }
+
+    /// Find a static method in this class or its superclass chain
+    pub fn find_static_method(&self, name: &str) -> Option<Rc<Function>> {
+        // First check this class
+        if let Some(method) = self.static_methods.get(name) {
+            return Some(Rc::clone(method));
+        }
+
+        // Then check superclass chain
+        if let Some(ref superclass) = self.superclass {
+            return superclass.find_static_method(name);
+        }
+
+        None
+    }
 }
 
 #[derive(Debug)]
@@ -253,6 +297,7 @@ mod tests {
     fn class_displays_as_bagulho() {
         let class = Class {
             name: "Pessoa".to_string(),
+            superclass: None,
             methods: HashMap::new(),
             static_methods: HashMap::new(),
         };
@@ -264,6 +309,7 @@ mod tests {
     fn same_class_rc_is_equal() {
         let class = Rc::new(Class {
             name: "Pessoa".to_string(),
+            superclass: None,
             methods: HashMap::new(),
             static_methods: HashMap::new(),
         });
@@ -277,6 +323,7 @@ mod tests {
         let make_class = || {
             Rc::new(Class {
                 name: "Pessoa".to_string(),
+                superclass: None,
                 methods: HashMap::new(),
                 static_methods: HashMap::new(),
             })
@@ -287,9 +334,28 @@ mod tests {
     }
 
     #[test]
+    fn class_with_superclass() {
+        let parent = Rc::new(Class {
+            name: "Pai".to_string(),
+            superclass: None,
+            methods: HashMap::new(),
+            static_methods: HashMap::new(),
+        });
+        let child = Class {
+            name: "Filho".to_string(),
+            superclass: Some(Rc::clone(&parent)),
+            methods: HashMap::new(),
+            static_methods: HashMap::new(),
+        };
+        assert!(child.superclass.is_some());
+        assert_eq!(child.superclass.unwrap().name, "Pai");
+    }
+
+    #[test]
     fn instance_displays_as_parada() {
         let class = Rc::new(Class {
             name: "Pessoa".to_string(),
+            superclass: None,
             methods: HashMap::new(),
             static_methods: HashMap::new(),
         });
@@ -305,6 +371,7 @@ mod tests {
     fn instance_fields_initially_empty() {
         let class = Rc::new(Class {
             name: "Pessoa".to_string(),
+            superclass: None,
             methods: HashMap::new(),
             static_methods: HashMap::new(),
         });
@@ -319,6 +386,7 @@ mod tests {
     fn instance_can_set_and_get_field() {
         let class = Rc::new(Class {
             name: "Pessoa".to_string(),
+            superclass: None,
             methods: HashMap::new(),
             static_methods: HashMap::new(),
         });
@@ -341,6 +409,7 @@ mod tests {
     fn bind_creates_closure_with_o_cara() {
         let class = Rc::new(Class {
             name: "Pessoa".to_string(),
+            superclass: None,
             methods: HashMap::new(),
             static_methods: HashMap::new(),
         });

@@ -42,6 +42,18 @@ seVira (seLiga n = 1; n <= 15; n = n + 1) {
     vacilou salve n;
 }
 
+// Classes e herança
+bagulho Animal {
+    falar() { salve "..."; }
+}
+
+bagulho Cachorro < Animal {
+    falar() { salve "Au au!"; }
+}
+
+seLiga rex = Cachorro();
+rex.falar();  // Au au!
+
 // Emoji variables porque sim
 seLiga 🔥 = "crush";
 oiSumida 🔥;
@@ -79,7 +91,7 @@ oiSumida 🔥;
 | `this` | `oCara` | "the dude" | ✅ |
 | `init` | `bora` | "let's go!" (initializer) | ✅ |
 | `static` | `bagulho` | "thing" (inside class) | ✅ |
-| `super` | `mestre` | "master" | 🔜 |
+| `super` | `mestre` | "master" | ✅ |
 
 ## Runtime Terminology
 

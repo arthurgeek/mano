@@ -1,0 +1,125 @@
+// Herança em mano!
+// Usa < pra herdar de outro bagulho (coroa)
+// A cria herda todas as fitas do coroa!
+
+// === Sintaxe de herança ===
+// bagulho Cria < Coroa { }
+
+bagulho Animal {
+    falar() {
+        salve "Algum som...";
+    }
+
+    respirar() {
+        salve "Respirando...";
+    }
+}
+
+// Cachorro herda de Animal
+bagulho Cachorro < Animal {
+    latir() {
+        salve "Au au!";
+    }
+}
+
+salve "=== Herança de métodos ===";
+seLiga rex = Cachorro();
+rex.latir();      // Au au! (próprio)
+rex.falar();      // Algum som... (herdado!)
+rex.respirar();   // Respirando... (herdado!)
+
+// === Override (sobrescrever método) ===
+bagulho Gato < Animal {
+    // Sobrescreve o método do coroa
+    falar() {
+        salve "Miau!";
+    }
+}
+
+seLiga mimi = Gato();
+mimi.falar();     // Miau! (sobrescrito)
+mimi.respirar();  // Respirando... (herdado)
+
+// === Herança multinível ===
+bagulho SerVivo {
+    viver() {
+        salve "Vivendo...";
+    }
+}
+
+bagulho Mamifero < SerVivo {
+    amamentar() {
+        salve "Amamentando...";
+    }
+}
+
+bagulho Baleia < Mamifero {
+    nadar() {
+        salve "Nadando...";
+    }
+}
+
+salve "=== Herança multinível ===";
+seLiga moby = Baleia();
+moby.nadar();      // Nadando... (próprio)
+moby.amamentar();  // Amamentando... (de Mamifero)
+moby.viver();      // Vivendo... (de SerVivo)
+
+// === Herança de fitas estáticas ===
+bagulho Matematica {
+    bagulho dobrar(x) {
+        toma x * 2;
+    }
+}
+
+bagulho MatematicaAvancada < Matematica {
+    bagulho triplicar(x) {
+        toma x * 3;
+    }
+}
+
+salve "=== Herança de fitas estáticas ===";
+salve MatematicaAvancada.dobrar(21);     // 42 (herdado!)
+salve MatematicaAvancada.triplicar(14);  // 42 (próprio)
+
+// === Mestre (super) - chamar fita do coroa ===
+bagulho Sonho {
+    cozinhar() {
+        salve "Frita até dourar.";
+    }
+}
+
+bagulho SonhoDeCreme < Sonho {
+    cozinhar() {
+        mestre.cozinhar();  // Chama a fita do coroa!
+        salve "Enche de creme.";
+    }
+}
+
+salve "=== Mestre (super) ===";
+seLiga sonho = SonhoDeCreme();
+sonho.cozinhar();
+
+// === Mestre sempre busca no coroa do bagulho onde foi declarado ===
+bagulho A {
+    metodo() { salve "A method"; }
+}
+
+bagulho B < A {
+    metodo() { salve "B method"; }
+    teste() { mestre.metodo(); }  // Sempre chama A.metodo(), não B!
+}
+
+bagulho C < B {}
+
+salve "=== Mestre no coroa correto ===";
+C().teste();  // Imprime "A method" (não "B method"!)
+
+// === Erros de herança ===
+// bagulho Foo < Foo { }  // ERRO: Não dá pra ser cria de si mesmo, mano!
+// seLiga x = 42;
+// bagulho Bar < x { }    // ERRO: Só bagulho pode ser coroa, mano!
+
+// === Erros de mestre ===
+// mestre.foo();  // ERRO: Não pode usar 'mestre' fora de um bagulho!
+// bagulho Solitario { teste() { mestre.foo(); } }  // ERRO: Não pode usar 'mestre' num bagulho sem coroa!
