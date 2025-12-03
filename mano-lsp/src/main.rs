@@ -17,7 +17,8 @@ use lsp_types::{
     },
 };
 use mano::{
-    KEYWORDS, ManoError, NATIVE_FUNCTIONS, Parser, Scanner, Stmt, TokenType, is_identifier_char,
+    Expr, INITIALIZER_NAME, KEYWORDS, ManoError, NATIVE_FUNCTIONS, Parser, Scanner, Stmt,
+    TokenType, is_identifier_char,
 };
 
 fn main() -> Result<(), Box<dyn Error + Sync + Send>> {
@@ -91,8 +92,7 @@ fn handle_request(
         let position = params.text_document_position.position;
 
         let completions = if let Some(source) = documents.get(&uri) {
-            let prefix = get_prefix_at_position(source, position);
-            get_completions(source, &prefix)
+            get_completions_at_position(source, position)
         } else {
             vec![]
         };
@@ -310,6 +310,169 @@ fn get_prefix_at_position(source: &str, position: Position) -> String {
     line[prefix_start..col].to_string()
 }
 
+struct CompletionContext {
+    is_dot_completion: bool,
+    receiver: Option<String>,
+    prefix: String,
+}
+
+fn get_completion_context(source: &str, position: Position) -> CompletionContext {
+    let lines: Vec<&str> = source.lines().collect();
+    let line_idx = position.line as usize;
+
+    if line_idx >= lines.len() {
+        return CompletionContext {
+            is_dot_completion: false,
+            receiver: None,
+            prefix: String::new(),
+        };
+    }
+
+    let line = lines[line_idx];
+    let col = (position.character as usize).min(line.len());
+    let before_cursor = &line[..col];
+
+    // Check if we're right after a dot (e.g., "foo." or "foo.bar")
+    // Find the last dot before cursor
+    if let Some(dot_pos) = before_cursor.rfind('.') {
+        let after_dot = &before_cursor[dot_pos + 1..];
+        let prefix = after_dot.to_string();
+
+        // Find receiver: identifier before the dot
+        let before_dot = &before_cursor[..dot_pos];
+        let receiver_start = before_dot
+            .rfind(|c: char| !c.is_alphanumeric() && c != '_')
+            .map(|i| i + 1)
+            .unwrap_or(0);
+        let receiver = before_dot[receiver_start..].to_string();
+
+        if !receiver.is_empty() {
+            return CompletionContext {
+                is_dot_completion: true,
+                receiver: Some(receiver),
+                prefix,
+            };
+        }
+    }
+
+    // Not a dot completion - return regular prefix
+    let prefix = get_prefix_at_position(source, position);
+    CompletionContext {
+        is_dot_completion: false,
+        receiver: None,
+        prefix,
+    }
+}
+
+fn get_completions_at_position(source: &str, position: Position) -> Vec<CompletionItem> {
+    let context = get_completion_context(source, position);
+
+    if context.is_dot_completion {
+        if let Some(receiver) = &context.receiver {
+            // Find the class of the receiver variable
+            if let Some(class_name) = find_variable_class(source, receiver) {
+                // Return methods of that class (excluding initializer - it's only called on instantiation)
+                return get_class_methods(source, &class_name)
+                    .into_iter()
+                    .filter(|(name, _)| {
+                        name != INITIALIZER_NAME && name.starts_with(&context.prefix)
+                    })
+                    .map(|(name, params)| CompletionItem {
+                        label: name,
+                        kind: Some(CompletionItemKind::METHOD),
+                        detail: Some(format!("({})", params.join(", "))),
+                        ..Default::default()
+                    })
+                    .collect();
+            }
+        }
+        // Unknown receiver type - return empty
+        return vec![];
+    }
+
+    // Regular completion
+    get_completions(source, &context.prefix)
+}
+
+/// Finds the class name that a variable is an instance of
+fn find_variable_class(source: &str, var_name: &str) -> Option<String> {
+    let scanner = Scanner::new(source);
+    let tokens: Vec<_> = scanner.filter_map(|r| r.ok()).collect();
+    let mut parser = Parser::new(tokens);
+    let statements = parser.parse().unwrap_or_default();
+
+    find_var_class_in_stmts(&statements, var_name)
+}
+
+fn find_var_class_in_stmts(stmts: &[Stmt], var_name: &str) -> Option<String> {
+    for stmt in stmts {
+        // Check if this is a var declaration with a class instantiation
+        if let Some((name, initializer)) = stmt.var_declaration()
+            && name.lexeme == var_name
+            && let Some(class_name) = initializer.as_ref().and_then(get_class_from_call)
+        {
+            return Some(class_name);
+        }
+        // Recurse into children
+        for child in stmt.children() {
+            if let Some(class_name) = find_var_class_in_stmts(std::slice::from_ref(child), var_name)
+            {
+                return Some(class_name);
+            }
+        }
+    }
+    None
+}
+
+/// Check if an expression is a class call like `ClassName()`
+fn get_class_from_call(expr: &Expr) -> Option<String> {
+    match expr {
+        Expr::Call { callee, .. } => {
+            if let Expr::Variable { name } = callee.as_ref() {
+                // Check if this is a class name (by convention, classes start with uppercase)
+                // Or we could check against known class declarations
+                Some(name.lexeme.clone())
+            } else {
+                None
+            }
+        }
+        _ => None,
+    }
+}
+
+/// Get all methods of a class with their parameters
+fn get_class_methods(source: &str, class_name: &str) -> Vec<(String, Vec<String>)> {
+    let scanner = Scanner::new(source);
+    let tokens: Vec<_> = scanner.filter_map(|r| r.ok()).collect();
+    let mut parser = Parser::new(tokens);
+    let statements = parser.parse().unwrap_or_default();
+
+    let mut methods = Vec::new();
+    collect_class_methods(&statements, class_name, &mut methods);
+    methods
+}
+
+fn collect_class_methods(
+    stmts: &[Stmt],
+    class_name: &str,
+    methods: &mut Vec<(String, Vec<String>)>,
+) {
+    for stmt in stmts {
+        if let Some((name, class_methods)) = stmt.class_declaration()
+            && name.lexeme == class_name
+        {
+            for method_stmt in class_methods {
+                if let Some((method_name, params, _)) = method_stmt.function_declaration() {
+                    methods.push((
+                        method_name.lexeme.clone(),
+                        params.iter().map(|t| t.lexeme.clone()).collect(),
+                    ));
+                }
+            }
+        }
+    }
+}
+
 fn get_completions(source: &str, prefix: &str) -> Vec<CompletionItem> {
     let mut completions = Vec::new();
 
@@ -359,6 +522,30 @@ fn get_completions(source: &str, prefix: &str) -> Vec<CompletionItem> {
         }
     }
 
+    // Add class names from parsed AST
+    for (name, _) in extract_class_declarations(source) {
+        if name.starts_with(prefix) {
+            completions.push(CompletionItem {
+                label: name,
+                kind: Some(CompletionItemKind::CLASS),
+                ..Default::default()
+            });
+        }
+    }
+
+    // Add method names from parsed AST
+    for (method_name, _class_name, params, _) in extract_method_info(source) {
+        if method_name.starts_with(prefix) {
+            let params_str = format!("({})", params.join(", "));
+            completions.push(CompletionItem {
+                label: method_name,
+                kind: Some(CompletionItemKind::METHOD),
+                detail: Some(params_str),
+                ..Default::default()
+            });
+        }
+    }
+
     completions
 }
 
@@ -399,6 +586,68 @@ fn extract_function_declarations(source: &str) -> Vec<(String, std::ops::Range<u
         .into_iter()
         .map(|(name, _, span)| (name, span))
         .collect()
+}
+
+fn extract_class_declarations(source: &str) -> Vec<(String, std::ops::Range<usize>)> {
+    let scanner = Scanner::new(source);
+    let tokens: Vec<_> = scanner.filter_map(|r| r.ok()).collect();
+    let mut parser = Parser::new(tokens);
+    let statements = parser.parse().unwrap_or_default();
+
+    let mut declarations = Vec::new();
+    collect_class_declarations(&statements, &mut declarations);
+    declarations
+}
+
+fn collect_class_declarations(
+    statements: &[Stmt],
+    declarations: &mut Vec<(String, std::ops::Range<usize>)>,
+) {
+    for stmt in statements {
+        if let Some((name, _methods)) = stmt.class_declaration() {
+            declarations.push((name.lexeme.clone(), name.span.clone()));
+        }
+        for child in stmt.children() {
+            collect_class_declarations(std::slice::from_ref(child), declarations);
+        }
+    }
+}
+
+/// Returns (method_name, class_name, params, span) for each method
+fn extract_method_info(source: &str) -> Vec<(String, String, Vec<String>, std::ops::Range<usize>)> {
+    let scanner = Scanner::new(source);
+    let tokens: Vec<_> = scanner.filter_map(|r| r.ok()).collect();
+    let mut parser = Parser::new(tokens);
+    let statements = parser.parse().unwrap_or_default();
+
+    let mut methods = Vec::new();
+    collect_method_info(&statements, &mut methods);
+    methods
+}
+
+fn collect_method_info(
+    statements: &[Stmt],
+    methods: &mut Vec<(String, String, Vec<String>, std::ops::Range<usize>)>,
+) {
+    for stmt in statements {
+        if let Some((class_name, class_methods)) = stmt.class_declaration() {
+            for method in class_methods {
+                if let Some((method_name, params, _body)) = method.function_declaration() {
+                    let param_names: Vec<String> =
+                        params.iter().map(|t| t.lexeme.clone()).collect();
+                    methods.push((
+                        method_name.lexeme.clone(),
+                        class_name.lexeme.clone(),
+                        param_names,
+                        method_name.span.clone(),
+                    ));
+                }
+            }
+        }
+        for child in stmt.children() {
+            collect_method_info(std::slice::from_ref(child), methods);
+        }
+    }
 }
 
 /// Returns (name, params, span) for each function declaration
@@ -445,6 +694,24 @@ fn find_definition(source: &str, position: Position) -> Option<Range> {
     // Check function declarations
     for (name, span) in extract_function_declarations(source) {
         if name == word {
+            let start = byte_offset_to_position(source, span.start);
+            let end = byte_offset_to_position(source, span.end);
+            return Some(Range { start, end });
+        }
+    }
+
+    // Check class declarations
+    for (name, span) in extract_class_declarations(source) {
+        if name == word {
+            let start = byte_offset_to_position(source, span.start);
+            let end = byte_offset_to_position(source, span.end);
+            return Some(Range { start, end });
+        }
+    }
+
+    // Check method declarations
+    for (method_name, _class_name, _params, span) in extract_method_info(source) {
+        if method_name == word {
             let start = byte_offset_to_position(source, span.start);
             let end = byte_offset_to_position(source, span.end);
             return Some(Range { start, end });
@@ -576,13 +843,15 @@ fn find_references(source: &str, position: Position, uri: Uri) -> Vec<Location> 
         None => return vec![],
     };
 
-    // Check if this word is a declared variable or function
+    // Check if this word is a declared variable, function, or class
     let var_declarations = extract_variable_declarations(source);
     let func_declarations = extract_function_declarations(source);
+    let class_declarations = extract_class_declarations(source);
     let is_variable = var_declarations.iter().any(|(name, _)| name == &word);
     let is_function = func_declarations.iter().any(|(name, _)| name == &word);
+    let is_class = class_declarations.iter().any(|(name, _)| name == &word);
 
-    if !is_variable && !is_function {
+    if !is_variable && !is_function && !is_class {
         return vec![];
     }
 
@@ -640,6 +909,40 @@ fn get_document_symbols(source: &str, uri: Uri) -> Vec<SymbolInformation> {
         });
     }
 
+    // Add class symbols
+    for (name, span) in extract_class_declarations(source) {
+        let start = byte_offset_to_position(source, span.start);
+        let end = byte_offset_to_position(source, span.end);
+        symbols.push(SymbolInformation {
+            name,
+            kind: SymbolKind::CLASS,
+            location: Location {
+                uri: uri.clone(),
+                range: Range { start, end },
+            },
+            tags: None,
+            deprecated: None,
+            container_name: None,
+        });
+    }
+
+    // Add method symbols
+    for (method_name, class_name, _params, span) in extract_method_info(source) {
+        let start = byte_offset_to_position(source, span.start);
+        let end = byte_offset_to_position(source, span.end);
+        symbols.push(SymbolInformation {
+            name: method_name,
+            kind: SymbolKind::METHOD,
+            location: Location {
+                uri: uri.clone(),
+                range: Range { start, end },
+            },
+            tags: None,
+            deprecated: None,
+            container_name: Some(class_name),
+        });
+    }
+
     symbols
 }
 
@@ -669,6 +972,24 @@ fn get_hover(source: &str, position: Position) -> Option<String> {
         if name == word {
             let params_str = params.join(", ");
             return Some(format!("`{}({})` (function)", name, params_str));
+        }
+    }
+
+    // Check if it's a class
+    for (name, _span) in extract_class_declarations(source) {
+        if name == word {
+            return Some(format!("`{}` (bagulho)", name));
+        }
+    }
+
+    // Check if it's a method
+    for (method_name, class_name, params, _span) in extract_method_info(source) {
+        if method_name == word {
+            let params_str = params.join(", ");
+            return Some(format!(
+                "`{}.{}({})` (method)",
+                class_name, method_name, params_str
+            ));
         }
     }
 
@@ -1307,5 +1628,303 @@ mod tests {
         let result = get_completions(source, "pi");
         let ping = result.iter().find(|c| c.label == "ping").unwrap();
         assert_eq!(ping.detail, Some("()".to_string()));
+    }
+
+    // === Class support ===
+
+    #[test]
+    fn extract_class_declarations_returns_class_names() {
+        let source = "bagulho Pessoa {}";
+        let result = extract_class_declarations(source);
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].0, "Pessoa");
+    }
+
+    #[test]
+    fn extract_class_declarations_returns_multiple_classes() {
+        let source = "bagulho Pessoa {}\nbagulho Carro {}";
+        let result = extract_class_declarations(source);
+        assert_eq!(result.len(), 2);
+        assert_eq!(result[0].0, "Pessoa");
+        assert_eq!(result[1].0, "Carro");
+    }
+
+    #[test]
+    fn find_definition_finds_class_declaration() {
+        let source = "bagulho Pessoa {}\nseLiga p = Pessoa();";
+        let result = find_definition(source, Position::new(1, 11)); // on "Pessoa" usage
+        assert!(result.is_some());
+        assert_eq!(result.unwrap().start.line, 0);
+    }
+
+    #[test]
+    fn get_hover_returns_class_info() {
+        let source = "bagulho Pessoa {}";
+        let result = get_hover(source, Position::new(0, 8)); // on "Pessoa"
+        assert!(result.is_some());
+        let hover = result.unwrap();
+        assert!(
+            hover.contains("bagulho"),
+            "Expected 'bagulho' in hover, got: {}",
+            hover
+        );
+        assert!(
+            hover.contains("Pessoa"),
+            "Expected 'Pessoa' in hover, got: {}",
+            hover
+        );
+    }
+
+    #[test]
+    fn find_references_finds_class_usages() {
+        let source = "bagulho Pessoa {}\nseLiga p = Pessoa();\nsalve Pessoa;";
+        let result = find_references(source, Position::new(0, 8), test_uri()); // on "Pessoa" declaration
+        assert_eq!(result.len(), 3); // declaration + 2 usages
+    }
+
+    #[test]
+    fn get_document_symbols_returns_class_symbol() {
+        let source = "bagulho Pessoa {}";
+        let result = get_document_symbols(source, test_uri());
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].name, "Pessoa");
+        assert_eq!(result[0].kind, SymbolKind::CLASS);
+    }
+
+    // === Method support ===
+
+    #[test]
+    fn extract_method_info_returns_method_with_class() {
+        let source = "bagulho Pessoa { falar() { salve 1; } }";
+        let result = extract_method_info(source);
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].0, "falar"); // method name
+        assert_eq!(result[0].1, "Pessoa"); // class name
+    }
+
+    #[test]
+    fn extract_method_info_returns_multiple_methods() {
+        let source = "bagulho Pessoa { falar() {} andar() {} }";
+        let result = extract_method_info(source);
+        assert_eq!(result.len(), 2);
+        assert!(
+            result
+                .iter()
+                .any(|(name, class, _, _)| name == "falar" && class == "Pessoa")
+        );
+        assert!(
+            result
+                .iter()
+                .any(|(name, class, _, _)| name == "andar" && class == "Pessoa")
+        );
+    }
+
+    #[test]
+    fn find_definition_finds_method_declaration() {
+        let source = "bagulho Pessoa { falar() {} }\nseLiga p = Pessoa();\np.falar();";
+        let result = find_definition(source, Position::new(2, 2)); // on "falar" call
+        assert!(result.is_some());
+        assert_eq!(result.unwrap().start.line, 0);
+    }
+
+    #[test]
+    fn get_hover_returns_method_info() {
+        let source = "bagulho Pessoa { falar(msg) { salve msg; } }";
+        let result = get_hover(source, Position::new(0, 17)); // on "falar"
+        assert!(result.is_some());
+        let hover = result.unwrap();
+        assert!(
+            hover.contains("falar"),
+            "Expected 'falar' in hover, got: {}",
+            hover
+        );
+        assert!(
+            hover.contains("Pessoa"),
+            "Expected 'Pessoa' in hover, got: {}",
+            hover
+        );
+    }
+
+    #[test]
+    fn get_document_symbols_returns_method_symbol() {
+        let source = "bagulho Pessoa { falar() {} }";
+        let result = get_document_symbols(source, test_uri());
+        assert!(
+            result
+                .iter()
+                .any(|s| s.name == "falar" && s.kind == SymbolKind::METHOD)
+        );
+    }
+
+    #[test]
+    fn get_completions_includes_class_names() {
+        let source = "bagulho Pessoa {}";
+        let result = get_completions(source, "Pes");
+        assert!(result.iter().any(|c| c.label == "Pessoa"));
+    }
+
+    #[test]
+    fn get_completions_includes_method_names() {
+        let source = "bagulho Pessoa { falar() {} }";
+        let result = get_completions(source, "fal");
+        assert!(result.iter().any(|c| c.label == "falar"));
+    }
+
+    #[test]
+    fn class_completion_has_class_kind() {
+        let source = "bagulho Pessoa {}";
+        let result = get_completions(source, "Pes");
+        let pessoa = result.iter().find(|c| c.label == "Pessoa");
+        assert!(pessoa.is_some());
+        assert_eq!(pessoa.unwrap().kind, Some(CompletionItemKind::CLASS));
+    }
+
+    #[test]
+    fn method_completion_has_method_kind() {
+        let source = "bagulho Pessoa { falar() {} }";
+        let result = get_completions(source, "fal");
+        let falar = result.iter().find(|c| c.label == "falar");
+        assert!(falar.is_some());
+        assert_eq!(falar.unwrap().kind, Some(CompletionItemKind::METHOD));
+    }
+
+    // Instance-aware dot completion tests
+    #[test]
+    fn detect_dot_completion_context() {
+        let source = "seLiga p = Pessoa();\np.";
+        let position = Position::new(1, 2); // right after "p."
+        let context = get_completion_context(source, position);
+        assert!(context.is_dot_completion);
+        assert_eq!(context.receiver, Some("p".to_string()));
+    }
+
+    #[test]
+    fn dot_completion_returns_only_class_methods() {
+        let source = "bagulho Pessoa { falar() {} andar() {} }\nseLiga p = Pessoa();\np.";
+        let position = Position::new(2, 2); // right after "p."
+        let completions = get_completions_at_position(source, position);
+        assert!(completions.iter().any(|c| c.label == "falar"));
+        assert!(completions.iter().any(|c| c.label == "andar"));
+        // Should NOT include keywords or random variables
+        assert!(!completions.iter().any(|c| c.label == "salve"));
+        assert!(!completions.iter().any(|c| c.label == "seLiga"));
+    }
+
+    #[test]
+    fn dot_completion_excludes_variables_and_keywords() {
+        let source = "bagulho Car { drive() {} }\nseLiga x = 10;\nseLiga c = Car();\nc.";
+        let position = Position::new(3, 2); // right after "c."
+        let completions = get_completions_at_position(source, position);
+        // Should NOT have variables
+        assert!(!completions.iter().any(|c| c.label == "x"));
+        assert!(!completions.iter().any(|c| c.label == "c"));
+        // Should have class methods
+        assert!(completions.iter().any(|c| c.label == "drive"));
+    }
+
+    #[test]
+    fn dot_completion_tracks_class_from_instantiation() {
+        let source = "bagulho A { metodoA() {} }\nbagulho B { metodoB() {} }\nseLiga x = A();\nx.";
+        let position = Position::new(3, 2);
+        let completions = get_completions_at_position(source, position);
+        assert!(completions.iter().any(|c| c.label == "metodoA"));
+        assert!(!completions.iter().any(|c| c.label == "metodoB"));
+    }
+
+    #[test]
+    fn completion_context_returns_empty_for_line_beyond_source() {
+        let source = "salve 1;";
+        let position = Position::new(5, 0); // line 5 doesn't exist
+        let context = get_completion_context(source, position);
+        assert!(!context.is_dot_completion);
+        assert!(context.receiver.is_none());
+        assert!(context.prefix.is_empty());
+    }
+
+    #[test]
+    fn dot_completion_returns_empty_for_unknown_receiver() {
+        // Variable 'x' is not assigned from a class instantiation
+        let source = "seLiga x = 42;\nx.";
+        let position = Position::new(1, 2);
+        let completions = get_completions_at_position(source, position);
+        assert!(completions.is_empty());
+    }
+
+    #[test]
+    fn dot_completion_returns_empty_for_undefined_variable() {
+        // Variable 'y' is not defined at all
+        let source = "y.";
+        let position = Position::new(0, 2);
+        let completions = get_completions_at_position(source, position);
+        assert!(completions.is_empty());
+    }
+
+    #[test]
+    fn dot_completion_excludes_initializer_method() {
+        // bora is the initializer - should NOT appear in dot completions
+        let source =
+            "bagulho Pessoa { bora(nome) {} falar() {} }\nseLiga p = Pessoa(\"João\");\np.";
+        let position = Position::new(2, 2); // right after "p."
+        let completions = get_completions_at_position(source, position);
+        // Should have regular methods
+        assert!(completions.iter().any(|c| c.label == "falar"));
+        // Should NOT have bora (initializer)
+        assert!(
+            !completions.iter().any(|c| c.label == "bora"),
+            "bora should not appear in dot completions"
+        );
+    }
+
+    #[test]
+    fn find_variable_class_finds_in_nested_block() {
+        // Variable defined in a block (if statement)
+        let source = "sePá (firmeza) { seLiga x = Carro(); }";
+        let result = find_variable_class(source, "x");
+        assert_eq!(result, Some("Carro".to_string()));
+    }
+
+    #[test]
+    fn get_class_from_call_returns_none_for_non_call() {
+        use mano::Expr;
+        use mano::Literal;
+        // Test with a literal expression, not a call
+        let expr = Expr::Literal {
+            value: Literal::Number(42.0),
+        };
+        assert!(get_class_from_call(&expr).is_none());
+    }
+
+    #[test]
+    fn get_class_from_call_returns_none_for_method_call() {
+        use mano::{Expr, Token, TokenType};
+        // Test with a call where callee is a Get expression, not a Variable
+        let get_expr = Expr::Get {
+            object: Box::new(Expr::Variable {
+                name: Token {
+                    token_type: TokenType::Identifier,
+                    lexeme: "obj".to_string(),
+                    literal: None,
+                    span: 0..3,
+                },
+            }),
+            name: Token {
+                token_type: TokenType::Identifier,
+                lexeme: "method".to_string(),
+                literal: None,
+                span: 4..10,
+            },
+        };
+        let call_expr = Expr::Call {
+            callee: Box::new(get_expr),
+            paren: Token {
+                token_type: TokenType::RightParen,
+                lexeme: ")".to_string(),
+                literal: None,
+                span: 11..12,
+            },
+            arguments: vec![],
+        };
+        // This should return None because callee is Get, not Variable
+        assert!(get_class_from_call(&call_expr).is_none());
     }
 }

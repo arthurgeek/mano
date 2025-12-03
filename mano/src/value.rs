@@ -1,4 +1,5 @@
 use std::cell::RefCell;
+use std::collections::HashMap;
 use std::fmt;
 use std::rc::Rc;
 
@@ -10,6 +11,8 @@ use crate::token::{Literal, Token};
 pub enum Value {
     Literal(Literal),
     Function(Rc<Function>),
+    Class(Rc<Class>),
+    Instance(Rc<Instance>),
 }
 
 #[derive(Debug)]
@@ -39,6 +42,35 @@ pub struct ManoFunction {
     pub params: Vec<Token>,
     pub body: Vec<Stmt>,
     pub closure: Rc<RefCell<Environment>>,
+    pub is_getter: bool,
+}
+
+impl ManoFunction {
+    pub fn bind(&self, instance: Rc<Instance>) -> ManoFunction {
+        let mut env = Environment::with_enclosing(Rc::clone(&self.closure));
+        // Use slot-based storage for resolution to work
+        env.define_at_slot("oCara".to_string(), Value::Instance(instance));
+        ManoFunction {
+            name: self.name.clone(),
+            params: self.params.clone(),
+            body: self.body.clone(),
+            closure: Rc::new(RefCell::new(env)),
+            is_getter: self.is_getter,
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct Class {
+    pub name: String,
+    pub methods: HashMap<String, Rc<Function>>,
+    pub static_methods: HashMap<String, Rc<Function>>,
+}
+
+#[derive(Debug)]
+pub struct Instance {
+    pub class: Rc<Class>,
+    pub fields: RefCell<HashMap<String, Value>>,
 }
 
 impl fmt::Display for Value {
@@ -46,6 +78,8 @@ impl fmt::Display for Value {
         match self {
             Value::Literal(lit) => write!(f, "{}", lit),
             Value::Function(func) => write!(f, "{}", func),
+            Value::Class(class) => write!(f, "<bagulho {}>", class.name),
+            Value::Instance(instance) => write!(f, "<parada {}>", instance.class.name),
         }
     }
 }
@@ -73,6 +107,7 @@ impl PartialEq for Value {
         match (self, other) {
             (Value::Literal(a), Value::Literal(b)) => a == b,
             (Value::Function(a), Value::Function(b)) => Rc::ptr_eq(a, b),
+            (Value::Class(a), Value::Class(b)) => Rc::ptr_eq(a, b),
             _ => false,
         }
     }
@@ -105,6 +140,7 @@ mod tests {
             params: vec![],
             body: vec![],
             closure: Rc::new(RefCell::new(Environment::new())),
+            is_getter: false,
         };
         let value = Value::Function(Rc::new(Function::Mano(func)));
         assert_eq!(value.to_string(), "<fita caseira cumprimentar>");
@@ -117,6 +153,7 @@ mod tests {
             params: vec![],
             body: vec![],
             closure: Rc::new(RefCell::new(Environment::new())),
+            is_getter: false,
         };
         let value = Value::Function(Rc::new(Function::Mano(func)));
         assert_eq!(value.to_string(), "<fita caseira lambda>");
@@ -152,6 +189,7 @@ mod tests {
             params: vec![],
             body: vec![],
             closure: Rc::new(RefCell::new(Environment::new())),
+            is_getter: false,
         }));
         let a = Value::Function(Rc::clone(&func));
         let b = Value::Function(Rc::clone(&func));
@@ -178,6 +216,7 @@ mod tests {
                 params: vec![],
                 body: vec![],
                 closure: Rc::new(RefCell::new(Environment::new())),
+                is_getter: false,
             }))
         };
         let a = Value::Function(make_func());
@@ -193,6 +232,7 @@ mod tests {
             params: vec![],
             body: vec![],
             closure: Rc::new(RefCell::new(Environment::new())),
+            is_getter: false,
         })));
         assert_ne!(literal, func);
     }
@@ -207,5 +247,125 @@ mod tests {
         let debug_str = format!("{:?}", func);
         assert!(debug_str.contains("fazTeuCorre"));
         assert!(debug_str.contains("arity"));
+    }
+
+    #[test]
+    fn class_displays_as_bagulho() {
+        let class = Class {
+            name: "Pessoa".to_string(),
+            methods: HashMap::new(),
+            static_methods: HashMap::new(),
+        };
+        let value = Value::Class(Rc::new(class));
+        assert_eq!(value.to_string(), "<bagulho Pessoa>");
+    }
+
+    #[test]
+    fn same_class_rc_is_equal() {
+        let class = Rc::new(Class {
+            name: "Pessoa".to_string(),
+            methods: HashMap::new(),
+            static_methods: HashMap::new(),
+        });
+        let a = Value::Class(Rc::clone(&class));
+        let b = Value::Class(Rc::clone(&class));
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn different_class_rcs_are_not_equal() {
+        let make_class = || {
+            Rc::new(Class {
+                name: "Pessoa".to_string(),
+                methods: HashMap::new(),
+                static_methods: HashMap::new(),
+            })
+        };
+        let a = Value::Class(make_class());
+        let b = Value::Class(make_class());
+        assert_ne!(a, b);
+    }
+
+    #[test]
+    fn instance_displays_as_parada() {
+        let class = Rc::new(Class {
+            name: "Pessoa".to_string(),
+            methods: HashMap::new(),
+            static_methods: HashMap::new(),
+        });
+        let instance = Instance {
+            class: Rc::clone(&class),
+            fields: RefCell::new(HashMap::new()),
+        };
+        let value = Value::Instance(Rc::new(instance));
+        assert_eq!(value.to_string(), "<parada Pessoa>");
+    }
+
+    #[test]
+    fn instance_fields_initially_empty() {
+        let class = Rc::new(Class {
+            name: "Pessoa".to_string(),
+            methods: HashMap::new(),
+            static_methods: HashMap::new(),
+        });
+        let instance = Instance {
+            class: Rc::clone(&class),
+            fields: RefCell::new(HashMap::new()),
+        };
+        assert!(instance.fields.borrow().is_empty());
+    }
+
+    #[test]
+    fn instance_can_set_and_get_field() {
+        let class = Rc::new(Class {
+            name: "Pessoa".to_string(),
+            methods: HashMap::new(),
+            static_methods: HashMap::new(),
+        });
+        let instance = Instance {
+            class: Rc::clone(&class),
+            fields: RefCell::new(HashMap::new()),
+        };
+        instance.fields.borrow_mut().insert(
+            "nome".to_string(),
+            Value::Literal(Literal::String("João".to_string())),
+        );
+        let field = instance.fields.borrow().get("nome").cloned();
+        assert!(matches!(
+            field,
+            Some(Value::Literal(Literal::String(ref s))) if s == "João"
+        ));
+    }
+
+    #[test]
+    fn bind_creates_closure_with_o_cara() {
+        let class = Rc::new(Class {
+            name: "Pessoa".to_string(),
+            methods: HashMap::new(),
+            static_methods: HashMap::new(),
+        });
+        let instance = Rc::new(Instance {
+            class: Rc::clone(&class),
+            fields: RefCell::new(HashMap::new()),
+        });
+
+        let func = ManoFunction {
+            name: Some(Token {
+                token_type: TokenType::Identifier,
+                lexeme: "falar".to_string(),
+                literal: None,
+                span: 0..5,
+            }),
+            params: vec![],
+            body: vec![],
+            closure: Rc::new(RefCell::new(Environment::new())),
+            is_getter: false,
+        };
+
+        let bound = func.bind(Rc::clone(&instance));
+
+        // The bound function should have oCara defined in its closure at slot 0
+        let o_cara = bound.closure.borrow().get_at(0, 0).unwrap();
+        assert!(matches!(o_cara, Value::Instance(_)));
     }
 }

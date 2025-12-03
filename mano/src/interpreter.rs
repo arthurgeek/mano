@@ -1,14 +1,16 @@
 use std::cell::RefCell;
+use std::collections::HashMap;
 use std::io::Write;
 use std::rc::Rc;
 use std::time::SystemTime;
 
+use crate::INITIALIZER_NAME;
 use crate::ast::{Expr, Stmt};
 use crate::environment::Environment;
 use crate::error::ManoError;
 use crate::resolver::Resolutions;
 use crate::token::{Literal, TokenType};
-use crate::value::{Function, ManoFunction, NativeFunction, Value};
+use crate::value::{Class, Function, Instance, ManoFunction, NativeFunction, Value};
 
 pub struct Interpreter {
     environment: Rc<RefCell<Environment>>,
@@ -125,13 +127,18 @@ impl Interpreter {
             Stmt::Break { .. } => Err(ManoError::Break),
             Stmt::Else { body, .. } => self.execute(body, output),
             Stmt::Function {
-                name, params, body, ..
+                name,
+                params,
+                body,
+                is_getter,
+                ..
             } => {
                 let function = ManoFunction {
                     name: Some(name.clone()),
                     params: params.clone(),
                     body: body.clone(),
                     closure: Rc::clone(&self.environment),
+                    is_getter: *is_getter,
                 };
                 let value = Value::Function(Rc::new(Function::Mano(function)));
 
@@ -153,6 +160,59 @@ impl Interpreter {
                     None => Value::Literal(Literal::Nil),
                 };
                 Err(ManoError::Return(return_value))
+            }
+            Stmt::Class { name, methods, .. } => {
+                // Define class name (with nil initially)
+                self.environment
+                    .borrow_mut()
+                    .define(name.lexeme.clone(), Value::Literal(Literal::Nil));
+
+                // Create class (separate static and instance methods)
+                let mut method_map = HashMap::new();
+                let mut static_method_map = HashMap::new();
+                for method in methods {
+                    if let Stmt::Function {
+                        name: method_name,
+                        params,
+                        body,
+                        is_static,
+                        is_getter,
+                        ..
+                    } = method
+                    {
+                        let function = ManoFunction {
+                            name: Some(method_name.clone()),
+                            params: params.clone(),
+                            body: body.clone(),
+                            closure: Rc::clone(&self.environment),
+                            is_getter: *is_getter,
+                        };
+                        if *is_static {
+                            static_method_map.insert(
+                                method_name.lexeme.clone(),
+                                Rc::new(Function::Mano(function)),
+                            );
+                        } else {
+                            method_map.insert(
+                                method_name.lexeme.clone(),
+                                Rc::new(Function::Mano(function)),
+                            );
+                        }
+                    }
+                }
+                let class = Class {
+                    name: name.lexeme.clone(),
+                    methods: method_map,
+                    static_methods: static_method_map,
+                };
+
+                // Assign the class value
+                self.environment.borrow_mut().assign(
+                    &name.lexeme,
+                    Value::Class(Rc::new(class)),
+                    name.span.clone(),
+                )?;
+                Ok(())
             }
         }
     }
@@ -350,6 +410,7 @@ impl Interpreter {
                                 params: mano_func.params.clone(),
                                 body: mano_func.body.clone(),
                                 closure: Rc::clone(&mano_func.closure),
+                                is_getter: mano_func.is_getter,
                             };
                             self.call_mano_function(&func_clone, args, output)
                         }
@@ -367,6 +428,51 @@ impl Interpreter {
                             (native_func.func)(&args)
                         }
                     },
+                    Value::Class(class) => {
+                        // Create the instance first
+                        let instance = Rc::new(Instance {
+                            class: Rc::clone(&class),
+                            fields: RefCell::new(HashMap::new()),
+                        });
+
+                        // Look for initializer (bora)
+                        if let Some(initializer) = class.methods.get(INITIALIZER_NAME) {
+                            match initializer.as_ref() {
+                                Function::Mano(func) => {
+                                    // Check arity
+                                    if args.len() != func.params.len() {
+                                        return Err(ManoError::Runtime {
+                                            message: format!(
+                                                "Esse bagulho espera {} lances, mas tu passou {}, mano!",
+                                                func.params.len(),
+                                                args.len()
+                                            ),
+                                            span: paren.span.clone(),
+                                        });
+                                    }
+                                    // Bind and call bora
+                                    let bound = func.bind(Rc::clone(&instance));
+                                    self.call_mano_function(&bound, args, output)?;
+                                }
+                                Function::Native(_) => {
+                                    // Native initializers shouldn't happen
+                                }
+                            }
+                        } else {
+                            // No bora, so class takes no arguments
+                            if !args.is_empty() {
+                                return Err(ManoError::Runtime {
+                                    message: format!(
+                                        "Esse bagulho espera 0 lances, mas tu passou {}, mano!",
+                                        args.len()
+                                    ),
+                                    span: paren.span.clone(),
+                                });
+                            }
+                        }
+
+                        Ok(Value::Instance(instance))
+                    }
                     _ => Err(ManoError::Runtime {
                         message: "Só dá pra chamar fita, chapa!".to_string(),
                         span: paren.span.clone(),
@@ -379,8 +485,94 @@ impl Interpreter {
                     params: params.clone(),
                     body: body.clone(),
                     closure: Rc::clone(&self.environment),
+                    is_getter: false,
                 };
                 Ok(Value::Function(Rc::new(Function::Mano(func))))
+            }
+            Expr::Get { object, name } => {
+                let object_value = self.interpret(object, output)?;
+                match object_value {
+                    Value::Instance(instance) => {
+                        // First check fields
+                        if let Some(value) = instance.fields.borrow().get(&name.lexeme) {
+                            return Ok(value.clone());
+                        }
+
+                        // Then check methods on the class (bind to instance)
+                        // Note: static methods are NOT accessible on instances
+                        let method = instance.class.methods.get(&name.lexeme).cloned();
+                        if let Some(method) = method {
+                            if let Function::Mano(func) = method.as_ref() {
+                                let bound = func.bind(Rc::clone(&instance));
+                                // If it's a getter, auto-invoke it
+                                if func.is_getter {
+                                    return self.call_mano_function(&bound, vec![], output);
+                                }
+                                return Ok(Value::Function(Rc::new(Function::Mano(bound))));
+                            }
+                            return Ok(Value::Function(method));
+                        }
+
+                        Err(ManoError::Runtime {
+                            message: format!("Eita, '{}' não existe nessa parada!", name.lexeme),
+                            span: name.span.clone(),
+                        })
+                    }
+                    Value::Class(class) => {
+                        // Static methods are accessible on class itself
+                        if let Some(method) = class.static_methods.get(&name.lexeme).cloned() {
+                            return Ok(Value::Function(method));
+                        }
+
+                        Err(ManoError::Runtime {
+                            message: format!(
+                                "Eita, '{}' não é fita estática do bagulho {}!",
+                                name.lexeme, class.name
+                            ),
+                            span: name.span.clone(),
+                        })
+                    }
+                    _ => Err(ManoError::Runtime {
+                        message: "Só parada tem esquema, chapa!".to_string(),
+                        span: name.span.clone(),
+                    }),
+                }
+            }
+            Expr::Set {
+                object,
+                name,
+                value,
+            } => {
+                let object_value = self.interpret(object, output)?;
+                match object_value {
+                    Value::Instance(instance) => {
+                        let val = self.interpret(value, output)?;
+                        instance
+                            .fields
+                            .borrow_mut()
+                            .insert(name.lexeme.clone(), val.clone());
+                        Ok(val)
+                    }
+                    _ => Err(ManoError::Runtime {
+                        message: "Só parada tem esquema, chapa!".to_string(),
+                        span: name.span.clone(),
+                    }),
+                }
+            }
+            Expr::This { keyword } => {
+                // Look up "oCara" using resolution - same as Variable
+                if let Some(&(distance, slot)) = self.resolutions.get(&keyword.span) {
+                    self.environment
+                        .borrow()
+                        .get_at(distance, slot)
+                        .ok_or_else(|| ManoError::Runtime {
+                            message: "oCara não existe, mano!".to_string(),
+                            span: keyword.span.clone(),
+                        })
+                } else {
+                    // Unresolved = must be global (shouldn't happen for oCara)
+                    self.globals.borrow().get("oCara", keyword.span.clone())
+                }
             }
         }
     }
@@ -460,6 +652,7 @@ impl Interpreter {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::token::Token;
 
     fn num(n: f64) -> Value {
         Value::Literal(Literal::Number(n))
@@ -1825,6 +2018,8 @@ mod tests {
             body: vec![Stmt::print(Expr::Literal {
                 value: Literal::Number(42.0),
             })],
+            is_static: false,
+            is_getter: false,
             span: 0..30,
         };
         interpreter.execute(&func_stmt, &mut output).unwrap();
@@ -1849,6 +2044,8 @@ mod tests {
             body: vec![Stmt::print(Expr::Literal {
                 value: Literal::Number(42.0),
             })],
+            is_static: false,
+            is_getter: false,
             span: 0..30,
         };
         interpreter.execute(&func_stmt, &mut output).unwrap();
@@ -1879,6 +2076,8 @@ mod tests {
             body: vec![Stmt::print(Expr::Variable {
                 name: make_token(TokenType::Identifier, "nome", 20),
             })],
+            is_static: false,
+            is_getter: false,
             span: 0..30,
         };
 
@@ -1919,6 +2118,8 @@ mod tests {
                 make_token(TokenType::Identifier, "b", 0),
             ],
             body: vec![],
+            is_static: false,
+            is_getter: false,
             span: 0..30,
         };
         interpreter.execute(&func_stmt, &mut output).unwrap();
@@ -2057,6 +2258,8 @@ mod tests {
                 }),
                 span: 0..10,
             }],
+            is_static: false,
+            is_getter: false,
             span: 0..30,
         };
         interpreter.execute(&func_stmt, &mut output).unwrap();
@@ -2087,6 +2290,8 @@ mod tests {
                 value: None,
                 span: 0..5,
             }],
+            is_static: false,
+            is_getter: false,
             span: 0..20,
         };
         interpreter.execute(&func_stmt, &mut output).unwrap();
@@ -2124,6 +2329,8 @@ mod tests {
                     value: Literal::Number(2.0),
                 }),
             ],
+            is_static: false,
+            is_getter: false,
             span: 0..30,
         };
         interpreter.execute(&func_stmt, &mut output).unwrap();
@@ -2238,6 +2445,8 @@ mod tests {
                 }),
                 span: 0..15,
             }],
+            is_static: false,
+            is_getter: false,
             span: 0..30,
         };
         interpreter.execute(&func_stmt, &mut output).unwrap();
@@ -2439,5 +2648,1231 @@ mod tests {
         // And local slot 0 should still be 50
         let local_result = inner_env.borrow().get_at(0, 0).unwrap();
         assert_eq!(local_result, num(50.0));
+    }
+
+    #[test]
+    fn class_declaration_stores_class_in_environment() {
+        let mut interpreter = Interpreter::new();
+        let stmt = Stmt::Class {
+            name: Token {
+                token_type: TokenType::Identifier,
+                lexeme: "Pessoa".to_string(),
+                literal: None,
+                span: 8..14,
+            },
+            methods: vec![],
+            span: 0..17,
+        };
+
+        let mut output = Vec::new();
+        interpreter.execute(&stmt, &mut output).unwrap();
+
+        // Class should be stored in global environment
+        let names = interpreter.variable_names();
+        assert!(names.contains(&"Pessoa".to_string()));
+    }
+
+    #[test]
+    fn class_value_displays_as_bagulho() {
+        let mut interpreter = Interpreter::new();
+        let mut output = Vec::new();
+
+        // Declare class
+        let class_decl = Stmt::Class {
+            name: Token {
+                token_type: TokenType::Identifier,
+                lexeme: "Vazio".to_string(),
+                literal: None,
+                span: 8..13,
+            },
+            methods: vec![],
+            span: 0..16,
+        };
+        interpreter.execute(&class_decl, &mut output).unwrap();
+
+        // Print class
+        let print_stmt = Stmt::Print {
+            expression: Expr::Variable {
+                name: Token {
+                    token_type: TokenType::Identifier,
+                    lexeme: "Vazio".to_string(),
+                    literal: None,
+                    span: 22..27,
+                },
+            },
+            span: 17..28,
+        };
+
+        output.clear();
+        interpreter.execute(&print_stmt, &mut output).unwrap();
+
+        let printed = String::from_utf8(output).unwrap();
+        assert_eq!(printed.trim(), "<bagulho Vazio>");
+    }
+
+    #[test]
+    fn class_stores_methods() {
+        let mut interpreter = Interpreter::new();
+        let class_decl = Stmt::Class {
+            name: Token {
+                token_type: TokenType::Identifier,
+                lexeme: "Pessoa".to_string(),
+                literal: None,
+                span: 8..14,
+            },
+            methods: vec![Stmt::Function {
+                name: Token {
+                    token_type: TokenType::Identifier,
+                    lexeme: "falar".to_string(),
+                    literal: None,
+                    span: 17..22,
+                },
+                params: vec![],
+                body: vec![],
+                is_static: false,
+                is_getter: false,
+                span: 17..30,
+            }],
+            span: 0..32,
+        };
+
+        let mut output = Vec::new();
+        interpreter.execute(&class_decl, &mut output).unwrap();
+
+        // Just verify it doesn't error - we can't inspect methods easily
+        // In later sections we'll test calling them
+        let names = interpreter.variable_names();
+        assert!(names.contains(&"Pessoa".to_string()));
+    }
+
+    #[test]
+    fn calling_class_creates_instance() {
+        let mut interpreter = Interpreter::new();
+        let mut output = Vec::new();
+
+        // bagulho Pessoa {}
+        let class_decl = Stmt::Class {
+            name: Token {
+                token_type: TokenType::Identifier,
+                lexeme: "Pessoa".to_string(),
+                literal: None,
+                span: 0..6,
+            },
+            methods: vec![],
+            span: 0..20,
+        };
+        interpreter.execute(&class_decl, &mut output).unwrap();
+
+        // Pessoa()
+        let call_expr = Expr::Call {
+            callee: Box::new(Expr::Variable {
+                name: Token {
+                    token_type: TokenType::Identifier,
+                    lexeme: "Pessoa".to_string(),
+                    literal: None,
+                    span: 0..6,
+                },
+            }),
+            paren: Token {
+                token_type: TokenType::RightParen,
+                lexeme: ")".to_string(),
+                literal: None,
+                span: 7..8,
+            },
+            arguments: vec![],
+        };
+
+        let result = interpreter.interpret(&call_expr, &mut output).unwrap();
+        assert!(matches!(result, Value::Instance(_)));
+    }
+
+    #[test]
+    fn calling_class_with_arguments_errors() {
+        let mut interpreter = Interpreter::new();
+        let mut output = Vec::new();
+
+        // bagulho Pessoa {}
+        let class_decl = Stmt::Class {
+            name: Token {
+                token_type: TokenType::Identifier,
+                lexeme: "Pessoa".to_string(),
+                literal: None,
+                span: 0..6,
+            },
+            methods: vec![],
+            span: 0..20,
+        };
+        interpreter.execute(&class_decl, &mut output).unwrap();
+
+        // Pessoa(1, 2)
+        let call_expr = Expr::Call {
+            callee: Box::new(Expr::Variable {
+                name: Token {
+                    token_type: TokenType::Identifier,
+                    lexeme: "Pessoa".to_string(),
+                    literal: None,
+                    span: 0..6,
+                },
+            }),
+            paren: Token {
+                token_type: TokenType::RightParen,
+                lexeme: ")".to_string(),
+                literal: None,
+                span: 10..11,
+            },
+            arguments: vec![
+                Expr::Literal {
+                    value: Literal::Number(1.0),
+                },
+                Expr::Literal {
+                    value: Literal::Number(2.0),
+                },
+            ],
+        };
+
+        let result = interpreter.interpret(&call_expr, &mut output);
+        assert!(matches!(result, Err(ManoError::Runtime { .. })));
+        if let Err(ManoError::Runtime { message, .. }) = result {
+            assert!(message.contains("0 lances"));
+            assert!(message.contains("2"));
+        }
+    }
+
+    // === get/set expressions ===
+
+    #[test]
+    fn get_on_non_instance_errors() {
+        let mut interpreter = Interpreter::new();
+        // Try to access .nome on a number (not an instance)
+        let expr = Expr::Get {
+            object: Box::new(Expr::Literal {
+                value: Literal::Number(42.0),
+            }),
+            name: Token {
+                token_type: TokenType::Identifier,
+                lexeme: "nome".to_string(),
+                literal: None,
+                span: 3..7,
+            },
+        };
+        let result = eval(&mut interpreter, &expr);
+        assert!(matches!(result, Err(ManoError::Runtime { .. })));
+    }
+
+    #[test]
+    fn set_field_on_instance() {
+        let mut interpreter = Interpreter::new();
+        let mut output = Vec::new();
+
+        // bagulho Pessoa {}
+        let class_decl = Stmt::Class {
+            name: Token {
+                token_type: TokenType::Identifier,
+                lexeme: "Pessoa".to_string(),
+                literal: None,
+                span: 0..6,
+            },
+            methods: vec![],
+            span: 0..20,
+        };
+        interpreter.execute(&class_decl, &mut output).unwrap();
+
+        // seLiga p = Pessoa();
+        let var_decl = Stmt::Var {
+            name: Token {
+                token_type: TokenType::Identifier,
+                lexeme: "p".to_string(),
+                literal: None,
+                span: 0..1,
+            },
+            initializer: Some(Expr::Call {
+                callee: Box::new(Expr::Variable {
+                    name: Token {
+                        token_type: TokenType::Identifier,
+                        lexeme: "Pessoa".to_string(),
+                        literal: None,
+                        span: 0..6,
+                    },
+                }),
+                paren: Token {
+                    token_type: TokenType::RightParen,
+                    lexeme: ")".to_string(),
+                    literal: None,
+                    span: 7..8,
+                },
+                arguments: vec![],
+            }),
+            span: 0..10,
+        };
+        interpreter.execute(&var_decl, &mut output).unwrap();
+
+        // p.nome = "João" should return "João"
+        let set_expr = Expr::Set {
+            object: Box::new(Expr::Variable {
+                name: Token {
+                    token_type: TokenType::Identifier,
+                    lexeme: "p".to_string(),
+                    literal: None,
+                    span: 0..1,
+                },
+            }),
+            name: Token {
+                token_type: TokenType::Identifier,
+                lexeme: "nome".to_string(),
+                literal: None,
+                span: 2..6,
+            },
+            value: Box::new(Expr::Literal {
+                value: Literal::String("João".to_string()),
+            }),
+        };
+        let result = interpreter.interpret(&set_expr, &mut output).unwrap();
+        assert_eq!(result, str("João"));
+    }
+
+    #[test]
+    fn set_on_non_instance_errors() {
+        let mut interpreter = Interpreter::new();
+        // Try to set .nome on a number (not an instance)
+        let expr = Expr::Set {
+            object: Box::new(Expr::Literal {
+                value: Literal::Number(42.0),
+            }),
+            name: Token {
+                token_type: TokenType::Identifier,
+                lexeme: "nome".to_string(),
+                literal: None,
+                span: 3..7,
+            },
+            value: Box::new(Expr::Literal {
+                value: Literal::String("João".to_string()),
+            }),
+        };
+        let result = eval(&mut interpreter, &expr);
+        assert!(matches!(result, Err(ManoError::Runtime { .. })));
+    }
+
+    #[test]
+    fn get_undefined_property_errors() {
+        let mut interpreter = Interpreter::new();
+        let mut output = Vec::new();
+
+        // bagulho Pessoa {}
+        let class_decl = Stmt::Class {
+            name: Token {
+                token_type: TokenType::Identifier,
+                lexeme: "Pessoa".to_string(),
+                literal: None,
+                span: 0..6,
+            },
+            methods: vec![],
+            span: 0..20,
+        };
+        interpreter.execute(&class_decl, &mut output).unwrap();
+
+        // seLiga p = Pessoa();
+        let var_decl = Stmt::Var {
+            name: Token {
+                token_type: TokenType::Identifier,
+                lexeme: "p".to_string(),
+                literal: None,
+                span: 0..1,
+            },
+            initializer: Some(Expr::Call {
+                callee: Box::new(Expr::Variable {
+                    name: Token {
+                        token_type: TokenType::Identifier,
+                        lexeme: "Pessoa".to_string(),
+                        literal: None,
+                        span: 0..6,
+                    },
+                }),
+                paren: Token {
+                    token_type: TokenType::RightParen,
+                    lexeme: ")".to_string(),
+                    literal: None,
+                    span: 7..8,
+                },
+                arguments: vec![],
+            }),
+            span: 0..10,
+        };
+        interpreter.execute(&var_decl, &mut output).unwrap();
+
+        // p.undefined should error
+        let get_expr = Expr::Get {
+            object: Box::new(Expr::Variable {
+                name: Token {
+                    token_type: TokenType::Identifier,
+                    lexeme: "p".to_string(),
+                    literal: None,
+                    span: 0..1,
+                },
+            }),
+            name: Token {
+                token_type: TokenType::Identifier,
+                lexeme: "undefined".to_string(),
+                literal: None,
+                span: 2..11,
+            },
+        };
+        let result = interpreter.interpret(&get_expr, &mut output);
+        assert!(matches!(result, Err(ManoError::Runtime { .. })));
+    }
+
+    #[test]
+    fn get_existing_field_from_instance() {
+        let mut interpreter = Interpreter::new();
+        let mut output = Vec::new();
+
+        // bagulho Pessoa {}
+        let class_decl = Stmt::Class {
+            name: Token {
+                token_type: TokenType::Identifier,
+                lexeme: "Pessoa".to_string(),
+                literal: None,
+                span: 0..6,
+            },
+            methods: vec![],
+            span: 0..20,
+        };
+        interpreter.execute(&class_decl, &mut output).unwrap();
+
+        // seLiga p = Pessoa();
+        let var_decl = Stmt::Var {
+            name: Token {
+                token_type: TokenType::Identifier,
+                lexeme: "p".to_string(),
+                literal: None,
+                span: 0..1,
+            },
+            initializer: Some(Expr::Call {
+                callee: Box::new(Expr::Variable {
+                    name: Token {
+                        token_type: TokenType::Identifier,
+                        lexeme: "Pessoa".to_string(),
+                        literal: None,
+                        span: 0..6,
+                    },
+                }),
+                paren: Token {
+                    token_type: TokenType::RightParen,
+                    lexeme: ")".to_string(),
+                    literal: None,
+                    span: 7..8,
+                },
+                arguments: vec![],
+            }),
+            span: 0..10,
+        };
+        interpreter.execute(&var_decl, &mut output).unwrap();
+
+        // p.nome = "João";
+        let set_expr = Expr::Set {
+            object: Box::new(Expr::Variable {
+                name: Token {
+                    token_type: TokenType::Identifier,
+                    lexeme: "p".to_string(),
+                    literal: None,
+                    span: 0..1,
+                },
+            }),
+            name: Token {
+                token_type: TokenType::Identifier,
+                lexeme: "nome".to_string(),
+                literal: None,
+                span: 2..6,
+            },
+            value: Box::new(Expr::Literal {
+                value: Literal::String("João".to_string()),
+            }),
+        };
+        interpreter.interpret(&set_expr, &mut output).unwrap();
+
+        // p.nome should return "João"
+        let get_expr = Expr::Get {
+            object: Box::new(Expr::Variable {
+                name: Token {
+                    token_type: TokenType::Identifier,
+                    lexeme: "p".to_string(),
+                    literal: None,
+                    span: 0..1,
+                },
+            }),
+            name: Token {
+                token_type: TokenType::Identifier,
+                lexeme: "nome".to_string(),
+                literal: None,
+                span: 2..6,
+            },
+        };
+        let result = interpreter.interpret(&get_expr, &mut output).unwrap();
+        assert_eq!(result, str("João"));
+    }
+
+    #[test]
+    fn get_method_from_instance() {
+        let mut interpreter = Interpreter::new();
+        let mut output = Vec::new();
+
+        // bagulho Pessoa { falar() { toma "oi"; } }
+        let class_decl = Stmt::Class {
+            name: Token {
+                token_type: TokenType::Identifier,
+                lexeme: "Pessoa".to_string(),
+                literal: None,
+                span: 0..6,
+            },
+            methods: vec![Stmt::Function {
+                name: Token {
+                    token_type: TokenType::Identifier,
+                    lexeme: "falar".to_string(),
+                    literal: None,
+                    span: 10..15,
+                },
+                params: vec![],
+                body: vec![Stmt::Return {
+                    keyword: Token {
+                        token_type: TokenType::Return,
+                        lexeme: "toma".to_string(),
+                        literal: None,
+                        span: 20..24,
+                    },
+                    value: Some(Expr::Literal {
+                        value: Literal::String("oi".to_string()),
+                    }),
+                    span: 20..30,
+                }],
+                is_static: false,
+                is_getter: false,
+                span: 10..35,
+            }],
+            span: 0..40,
+        };
+        interpreter.execute(&class_decl, &mut output).unwrap();
+
+        // seLiga p = Pessoa();
+        let var_decl = Stmt::Var {
+            name: Token {
+                token_type: TokenType::Identifier,
+                lexeme: "p".to_string(),
+                literal: None,
+                span: 0..1,
+            },
+            initializer: Some(Expr::Call {
+                callee: Box::new(Expr::Variable {
+                    name: Token {
+                        token_type: TokenType::Identifier,
+                        lexeme: "Pessoa".to_string(),
+                        literal: None,
+                        span: 0..6,
+                    },
+                }),
+                paren: Token {
+                    token_type: TokenType::RightParen,
+                    lexeme: ")".to_string(),
+                    literal: None,
+                    span: 7..8,
+                },
+                arguments: vec![],
+            }),
+            span: 0..10,
+        };
+        interpreter.execute(&var_decl, &mut output).unwrap();
+
+        // p.falar should return the method (a function)
+        let get_expr = Expr::Get {
+            object: Box::new(Expr::Variable {
+                name: Token {
+                    token_type: TokenType::Identifier,
+                    lexeme: "p".to_string(),
+                    literal: None,
+                    span: 0..1,
+                },
+            }),
+            name: Token {
+                token_type: TokenType::Identifier,
+                lexeme: "falar".to_string(),
+                literal: None,
+                span: 2..7,
+            },
+        };
+        let result = interpreter.interpret(&get_expr, &mut output).unwrap();
+        assert!(matches!(result, Value::Function(_)));
+    }
+
+    #[test]
+    fn get_method_binds_o_cara() {
+        let mut interpreter = Interpreter::new();
+        let mut output = Vec::new();
+
+        // bagulho Pessoa { falar() {} }
+        let class_decl = Stmt::Class {
+            name: Token {
+                token_type: TokenType::Identifier,
+                lexeme: "Pessoa".to_string(),
+                literal: None,
+                span: 0..6,
+            },
+            methods: vec![Stmt::Function {
+                name: Token {
+                    token_type: TokenType::Identifier,
+                    lexeme: "falar".to_string(),
+                    literal: None,
+                    span: 10..15,
+                },
+                params: vec![],
+                body: vec![],
+                is_static: false,
+                is_getter: false,
+                span: 10..20,
+            }],
+            span: 0..25,
+        };
+        interpreter.execute(&class_decl, &mut output).unwrap();
+
+        // seLiga p = Pessoa();
+        let var_decl = Stmt::Var {
+            name: Token {
+                token_type: TokenType::Identifier,
+                lexeme: "p".to_string(),
+                literal: None,
+                span: 0..1,
+            },
+            initializer: Some(Expr::Call {
+                callee: Box::new(Expr::Variable {
+                    name: Token {
+                        token_type: TokenType::Identifier,
+                        lexeme: "Pessoa".to_string(),
+                        literal: None,
+                        span: 0..6,
+                    },
+                }),
+                paren: Token {
+                    token_type: TokenType::RightParen,
+                    lexeme: ")".to_string(),
+                    literal: None,
+                    span: 7..8,
+                },
+                arguments: vec![],
+            }),
+            span: 0..10,
+        };
+        interpreter.execute(&var_decl, &mut output).unwrap();
+
+        // p.falar should return a bound method with oCara
+        let get_expr = Expr::Get {
+            object: Box::new(Expr::Variable {
+                name: Token {
+                    token_type: TokenType::Identifier,
+                    lexeme: "p".to_string(),
+                    literal: None,
+                    span: 0..1,
+                },
+            }),
+            name: Token {
+                token_type: TokenType::Identifier,
+                lexeme: "falar".to_string(),
+                literal: None,
+                span: 2..7,
+            },
+        };
+        let result = interpreter.interpret(&get_expr, &mut output).unwrap();
+
+        // Check that it's a function with oCara bound at slot 0
+        if let Value::Function(func) = result {
+            if let Function::Mano(mano_func) = func.as_ref() {
+                let o_cara = mano_func.closure.borrow().get_at(0, 0);
+                assert!(
+                    o_cara.is_some(),
+                    "oCara should be defined in method closure"
+                );
+            } else {
+                panic!("Expected ManoFunction");
+            }
+        } else {
+            panic!("Expected Function");
+        }
+    }
+
+    #[test]
+    fn this_expression_returns_o_cara_value() {
+        let mut interpreter = Interpreter::new();
+        let mut output = Vec::new();
+
+        // Create an instance to be "oCara"
+        let class = Rc::new(Class {
+            name: "Pessoa".to_string(),
+            methods: HashMap::new(),
+            static_methods: HashMap::new(),
+        });
+        let instance = Rc::new(Instance {
+            class: Rc::clone(&class),
+            fields: RefCell::new(HashMap::new()),
+        });
+
+        // Set up environment with oCara defined at slot 0
+        interpreter
+            .environment
+            .borrow_mut()
+            .define_at_slot("oCara".to_string(), Value::Instance(Rc::clone(&instance)));
+
+        // Set up resolution for the This expression (distance 0, slot 0)
+        let this_expr = Expr::This {
+            keyword: Token {
+                token_type: TokenType::This,
+                lexeme: "oCara".to_string(),
+                literal: None,
+                span: 0..5,
+            },
+        };
+        interpreter.set_resolutions([(0..5, (0, 0))].into_iter().collect());
+
+        let result = interpreter.interpret(&this_expr, &mut output).unwrap();
+        assert!(matches!(result, Value::Instance(_)));
+    }
+
+    #[test]
+    fn this_unresolved_falls_back_to_globals() {
+        let mut interpreter = Interpreter::new();
+        let mut output = Vec::new();
+
+        // Create instance and put in globals as "oCara"
+        let class = Rc::new(Class {
+            name: "Test".to_string(),
+            methods: HashMap::new(),
+            static_methods: HashMap::new(),
+        });
+        let instance = Rc::new(Instance {
+            class: Rc::clone(&class),
+            fields: RefCell::new(HashMap::new()),
+        });
+        interpreter
+            .globals
+            .borrow_mut()
+            .define("oCara".to_string(), Value::Instance(Rc::clone(&instance)));
+
+        // This expression WITHOUT resolution (empty resolutions map)
+        let this_expr = Expr::This {
+            keyword: Token {
+                token_type: TokenType::This,
+                lexeme: "oCara".to_string(),
+                literal: None,
+                span: 100..105, // Different span, not in resolutions
+            },
+        };
+        // Don't set resolutions - this triggers the fallback path (lines 505-508)
+
+        let result = interpreter.interpret(&this_expr, &mut output).unwrap();
+        assert!(matches!(result, Value::Instance(_)));
+    }
+
+    #[test]
+    fn this_resolved_but_slot_empty_returns_error() {
+        let mut interpreter = Interpreter::new();
+        let mut output = Vec::new();
+
+        // This expression with resolution set, but NO value defined at that slot
+        let this_expr = Expr::This {
+            keyword: Token {
+                token_type: TokenType::This,
+                lexeme: "oCara".to_string(),
+                literal: None,
+                span: 0..5,
+            },
+        };
+
+        // Set up resolution pointing to slot 0, but DON'T define anything there
+        // This triggers lines 502-503 (get_at returns None)
+        interpreter.set_resolutions([(0..5, (0, 0))].into_iter().collect());
+
+        let result = interpreter.interpret(&this_expr, &mut output);
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        match err {
+            crate::error::ManoError::Runtime { message, .. } => {
+                assert!(message.contains("oCara não existe"));
+            }
+            _ => panic!("Expected runtime error"),
+        }
+    }
+
+    #[test]
+    fn get_native_method_returns_without_binding() {
+        let mut interpreter = Interpreter::new();
+        let mut output = Vec::new();
+
+        // Create a class with a native function as method
+        let native_fn = Rc::new(Function::Native(NativeFunction {
+            name: "nativeMethod".to_string(),
+            arity: 0,
+            func: |_| Ok(Value::Literal(Literal::Number(42.0))),
+        }));
+
+        let mut methods = HashMap::new();
+        methods.insert("nativeMethod".to_string(), native_fn);
+
+        let class = Rc::new(Class {
+            name: "TestClass".to_string(),
+            methods,
+            static_methods: HashMap::new(),
+        });
+        let instance = Rc::new(Instance {
+            class: Rc::clone(&class),
+            fields: RefCell::new(HashMap::new()),
+        });
+
+        // Manually set up the object to be the instance using slot-based storage
+        interpreter
+            .environment
+            .borrow_mut()
+            .define_at_slot("obj".to_string(), Value::Instance(Rc::clone(&instance)));
+
+        let get_expr = Expr::Get {
+            object: Box::new(Expr::Variable {
+                name: Token {
+                    token_type: TokenType::Identifier,
+                    lexeme: "obj".to_string(),
+                    literal: None,
+                    span: 0..3,
+                },
+            }),
+            name: Token {
+                token_type: TokenType::Identifier,
+                lexeme: "nativeMethod".to_string(),
+                literal: None,
+                span: 4..16,
+            },
+        };
+
+        // Set up resolution for the variable (distance 0, slot 0)
+        interpreter.set_resolutions([(0..3, (0, 0))].into_iter().collect());
+
+        let result = interpreter.interpret(&get_expr, &mut output).unwrap();
+        // Should return the native function (line 460)
+        assert!(matches!(result, Value::Function(_)));
+    }
+
+    #[test]
+    fn native_initializer_is_silently_ignored() {
+        // Edge case: class with a native function as "bora" initializer
+        // This shouldn't happen in practice, but the code handles it gracefully
+        let mut interpreter = Interpreter::new();
+        let mut output = Vec::new();
+
+        // Create a class with a native function named "bora"
+        let native_bora = NativeFunction {
+            name: "bora".to_string(),
+            arity: 0,
+            func: |_| Ok(Value::Literal(Literal::Nil)),
+        };
+
+        let mut methods = HashMap::new();
+        methods.insert("bora".to_string(), Rc::new(Function::Native(native_bora)));
+
+        let class = Rc::new(Class {
+            name: "TestClass".to_string(),
+            methods,
+            static_methods: HashMap::new(),
+        });
+
+        // Store the class in environment
+        interpreter
+            .environment
+            .borrow_mut()
+            .define("TestClass".to_string(), Value::Class(class));
+
+        // Call TestClass() - should create instance, native bora is ignored
+        let call_expr = Expr::Call {
+            callee: Box::new(Expr::Variable {
+                name: Token {
+                    token_type: TokenType::Identifier,
+                    lexeme: "TestClass".to_string(),
+                    literal: None,
+                    span: 0..9,
+                },
+            }),
+            paren: Token {
+                token_type: TokenType::RightParen,
+                lexeme: ")".to_string(),
+                literal: None,
+                span: 10..11,
+            },
+            arguments: vec![],
+        };
+
+        let result = interpreter.interpret(&call_expr, &mut output);
+        assert!(
+            result.is_ok(),
+            "Native initializer should be silently ignored"
+        );
+        assert!(matches!(result.unwrap(), Value::Instance(_)));
+    }
+
+    // === static methods ===
+
+    #[test]
+    fn static_method_callable_on_class() {
+        // bagulho Math { bagulho soma(a, b) { toma a + b; } }
+        // Math.soma(1, 2) -> 3
+        let mut interpreter = Interpreter::new();
+        let mut output = Vec::new();
+
+        let class_decl = Stmt::Class {
+            name: Token {
+                token_type: TokenType::Identifier,
+                lexeme: "Math".to_string(),
+                literal: None,
+                span: 0..4,
+            },
+            methods: vec![Stmt::Function {
+                name: Token {
+                    token_type: TokenType::Identifier,
+                    lexeme: "soma".to_string(),
+                    literal: None,
+                    span: 10..14,
+                },
+                params: vec![
+                    Token {
+                        token_type: TokenType::Identifier,
+                        lexeme: "a".to_string(),
+                        literal: None,
+                        span: 15..16,
+                    },
+                    Token {
+                        token_type: TokenType::Identifier,
+                        lexeme: "b".to_string(),
+                        literal: None,
+                        span: 18..19,
+                    },
+                ],
+                body: vec![Stmt::Return {
+                    keyword: Token {
+                        token_type: TokenType::Return,
+                        lexeme: "toma".to_string(),
+                        literal: None,
+                        span: 25..29,
+                    },
+                    value: Some(Expr::Binary {
+                        left: Box::new(Expr::Variable {
+                            name: Token {
+                                token_type: TokenType::Identifier,
+                                lexeme: "a".to_string(),
+                                literal: None,
+                                span: 30..31,
+                            },
+                        }),
+                        operator: Token {
+                            token_type: TokenType::Plus,
+                            lexeme: "+".to_string(),
+                            literal: None,
+                            span: 32..33,
+                        },
+                        right: Box::new(Expr::Variable {
+                            name: Token {
+                                token_type: TokenType::Identifier,
+                                lexeme: "b".to_string(),
+                                literal: None,
+                                span: 34..35,
+                            },
+                        }),
+                    }),
+                    span: 25..36,
+                }],
+                is_static: true,
+                is_getter: false,
+                span: 10..40,
+            }],
+            span: 0..45,
+        };
+        interpreter.execute(&class_decl, &mut output).unwrap();
+
+        // Set up resolutions for params a and b (distance 0, slots 0 and 1)
+        interpreter.set_resolutions([(30..31, (0, 0)), (34..35, (0, 1))].into_iter().collect());
+
+        // Math.soma(1, 2)
+        let call_expr = Expr::Call {
+            callee: Box::new(Expr::Get {
+                object: Box::new(Expr::Variable {
+                    name: Token {
+                        token_type: TokenType::Identifier,
+                        lexeme: "Math".to_string(),
+                        literal: None,
+                        span: 50..54,
+                    },
+                }),
+                name: Token {
+                    token_type: TokenType::Identifier,
+                    lexeme: "soma".to_string(),
+                    literal: None,
+                    span: 55..59,
+                },
+            }),
+            paren: Token {
+                token_type: TokenType::RightParen,
+                lexeme: ")".to_string(),
+                literal: None,
+                span: 65..66,
+            },
+            arguments: vec![
+                Expr::Literal {
+                    value: Literal::Number(1.0),
+                },
+                Expr::Literal {
+                    value: Literal::Number(2.0),
+                },
+            ],
+        };
+
+        let result = interpreter.interpret(&call_expr, &mut output).unwrap();
+        assert_eq!(result, Value::Literal(Literal::Number(3.0)));
+    }
+
+    #[test]
+    fn static_method_not_callable_on_instance() {
+        // bagulho Math { bagulho soma() {} }
+        // seLiga m = Math();
+        // m.soma() -> error
+        let mut interpreter = Interpreter::new();
+        let mut output = Vec::new();
+
+        let class_decl = Stmt::Class {
+            name: Token {
+                token_type: TokenType::Identifier,
+                lexeme: "Math".to_string(),
+                literal: None,
+                span: 0..4,
+            },
+            methods: vec![Stmt::Function {
+                name: Token {
+                    token_type: TokenType::Identifier,
+                    lexeme: "soma".to_string(),
+                    literal: None,
+                    span: 10..14,
+                },
+                params: vec![],
+                body: vec![],
+                is_static: true,
+                is_getter: false,
+                span: 10..20,
+            }],
+            span: 0..25,
+        };
+        interpreter.execute(&class_decl, &mut output).unwrap();
+
+        // seLiga m = Math();
+        let var_decl = Stmt::Var {
+            name: Token {
+                token_type: TokenType::Identifier,
+                lexeme: "m".to_string(),
+                literal: None,
+                span: 30..31,
+            },
+            initializer: Some(Expr::Call {
+                callee: Box::new(Expr::Variable {
+                    name: Token {
+                        token_type: TokenType::Identifier,
+                        lexeme: "Math".to_string(),
+                        literal: None,
+                        span: 34..38,
+                    },
+                }),
+                paren: Token {
+                    token_type: TokenType::RightParen,
+                    lexeme: ")".to_string(),
+                    literal: None,
+                    span: 40..41,
+                },
+                arguments: vec![],
+            }),
+            span: 30..42,
+        };
+        interpreter.execute(&var_decl, &mut output).unwrap();
+
+        // m.soma()
+        let call_expr = Expr::Call {
+            callee: Box::new(Expr::Get {
+                object: Box::new(Expr::Variable {
+                    name: Token {
+                        token_type: TokenType::Identifier,
+                        lexeme: "m".to_string(),
+                        literal: None,
+                        span: 50..51,
+                    },
+                }),
+                name: Token {
+                    token_type: TokenType::Identifier,
+                    lexeme: "soma".to_string(),
+                    literal: None,
+                    span: 52..56,
+                },
+            }),
+            paren: Token {
+                token_type: TokenType::RightParen,
+                lexeme: ")".to_string(),
+                literal: None,
+                span: 58..59,
+            },
+            arguments: vec![],
+        };
+
+        let result = interpreter.interpret(&call_expr, &mut output);
+        assert!(
+            result.is_err(),
+            "static method should not be callable on instance"
+        );
+    }
+
+    // === getter methods ===
+
+    #[test]
+    fn getter_auto_invoked_on_access() {
+        // bagulho Pessoa { idade { toma 42; } }
+        // seLiga p = Pessoa();
+        // p.idade -> 42 (auto-invoked, no parentheses needed)
+        let mut interpreter = Interpreter::new();
+        let mut output = Vec::new();
+
+        let class_decl = Stmt::Class {
+            name: Token {
+                token_type: TokenType::Identifier,
+                lexeme: "Pessoa".to_string(),
+                literal: None,
+                span: 0..6,
+            },
+            methods: vec![Stmt::Function {
+                name: Token {
+                    token_type: TokenType::Identifier,
+                    lexeme: "idade".to_string(),
+                    literal: None,
+                    span: 10..15,
+                },
+                params: vec![],
+                body: vec![Stmt::Return {
+                    keyword: Token {
+                        token_type: TokenType::Return,
+                        lexeme: "toma".to_string(),
+                        literal: None,
+                        span: 20..24,
+                    },
+                    value: Some(Expr::Literal {
+                        value: Literal::Number(42.0),
+                    }),
+                    span: 20..27,
+                }],
+                is_static: false,
+                is_getter: true,
+                span: 10..30,
+            }],
+            span: 0..35,
+        };
+        interpreter.execute(&class_decl, &mut output).unwrap();
+
+        // seLiga p = Pessoa();
+        let var_decl = Stmt::Var {
+            name: Token {
+                token_type: TokenType::Identifier,
+                lexeme: "p".to_string(),
+                literal: None,
+                span: 40..41,
+            },
+            initializer: Some(Expr::Call {
+                callee: Box::new(Expr::Variable {
+                    name: Token {
+                        token_type: TokenType::Identifier,
+                        lexeme: "Pessoa".to_string(),
+                        literal: None,
+                        span: 44..50,
+                    },
+                }),
+                paren: Token {
+                    token_type: TokenType::RightParen,
+                    lexeme: ")".to_string(),
+                    literal: None,
+                    span: 52..53,
+                },
+                arguments: vec![],
+            }),
+            span: 40..54,
+        };
+        interpreter.execute(&var_decl, &mut output).unwrap();
+
+        // p.idade -> auto-invoked getter
+        let get_expr = Expr::Get {
+            object: Box::new(Expr::Variable {
+                name: Token {
+                    token_type: TokenType::Identifier,
+                    lexeme: "p".to_string(),
+                    literal: None,
+                    span: 60..61,
+                },
+            }),
+            name: Token {
+                token_type: TokenType::Identifier,
+                lexeme: "idade".to_string(),
+                literal: None,
+                span: 62..67,
+            },
+        };
+
+        let result = interpreter.interpret(&get_expr, &mut output).unwrap();
+        assert_eq!(result, Value::Literal(Literal::Number(42.0)));
+    }
+
+    #[test]
+    fn accessing_nonexistent_static_method_errors() {
+        // bagulho Math { bagulho soma() {} }
+        // Math.multiplica -> error (doesn't exist)
+        let mut interpreter = Interpreter::new();
+        let mut output = Vec::new();
+
+        let class_decl = Stmt::Class {
+            name: Token {
+                token_type: TokenType::Identifier,
+                lexeme: "Math".to_string(),
+                literal: None,
+                span: 0..4,
+            },
+            methods: vec![Stmt::Function {
+                name: Token {
+                    token_type: TokenType::Identifier,
+                    lexeme: "soma".to_string(),
+                    literal: None,
+                    span: 10..14,
+                },
+                params: vec![],
+                body: vec![],
+                is_static: true,
+                is_getter: false,
+                span: 10..20,
+            }],
+            span: 0..25,
+        };
+        interpreter.execute(&class_decl, &mut output).unwrap();
+
+        // Math.multiplica -> error
+        let get_expr = Expr::Get {
+            object: Box::new(Expr::Variable {
+                name: Token {
+                    token_type: TokenType::Identifier,
+                    lexeme: "Math".to_string(),
+                    literal: None,
+                    span: 30..34,
+                },
+            }),
+            name: Token {
+                token_type: TokenType::Identifier,
+                lexeme: "multiplica".to_string(),
+                literal: None,
+                span: 35..45,
+            },
+        };
+
+        let result = interpreter.interpret(&get_expr, &mut output);
+        assert!(matches!(result, Err(ManoError::Runtime { .. })));
+        if let Err(ManoError::Runtime { message, .. }) = result {
+            assert!(message.contains("multiplica"));
+            assert!(message.contains("Math"));
+        }
     }
 }

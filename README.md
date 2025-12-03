@@ -75,9 +75,22 @@ oiSumida 🔥;
 | `break` | `saiFora` | "get out" | ✅ |
 | `fun` | `olhaEssaFita` | "check out this story" | ✅ |
 | `return` | `toma` | "take it!" | ✅ |
-| `class` | `bagulho` | "thing/stuff" | 🔜 |
-| `this` | `oCara` | "the dude" | 🔜 |
+| `class` | `bagulho` | "thing/stuff" | ✅ |
+| `this` | `oCara` | "the dude" | ✅ |
+| `init` | `bora` | "let's go!" (initializer) | ✅ |
+| `static` | `bagulho` | "thing" (inside class) | ✅ |
 | `super` | `mestre` | "master" | 🔜 |
+
+## Runtime Terminology
+
+These aren't keywords — they appear in runtime output and error messages to keep the mano vibe consistent:
+
+| Term | Meaning | Used for |
+|------|---------|----------|
+| `fita` | "story/scheme" | Functions: `<fita caseira cumprimentar>` |
+| `parada` | "thing/stuff" | Instances: `<parada Pessoa>` |
+| `esquema` | "scheme/setup" | Properties: `"Só parada tem esquema, chapa!"` |
+| `lance` | "move/thing" | Arguments: `"Esperava 2 lances, mas veio 3"` |
 
 ## Usage
 
@@ -140,6 +153,8 @@ mano implements several [Crafting Interpreters challenges](https://craftinginter
 | `/* */` nested | Block comments can nest |
 | `saiFora` break | Exit loops early |
 | Lambda expressions | Anonymous functions: `olhaEssaFita (x) { toma x * 2; }` |
+| Static methods | Class-level methods: `bagulho Math { bagulho add(a,b) { ... } }` |
+| Getter methods | Auto-invoked properties: `area { toma oCara.r * oCara.r; }` |
 | Unicode identifiers | Including emoji: `seLiga 🔥 = 42` |
 | `oiSumida` alias | Second print keyword for variety |
 | Unused variable warnings | Error on unused locals (use `_` prefix to suppress) |

@@ -83,6 +83,7 @@ UTF-8 with proper Portuguese accents. Comments use `//`.
 | `break` | `saiFora` | "get out" |
 | `class` | `bagulho` | "thing/stuff" |
 | `this` | `oCara` | "the dude" |
+| `init` | `bora` | "let's go!" (initializer) |
 | `super` | `mestre` | "master" |
 
 ## Book Reference

@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 
+use crate::INITIALIZER_NAME;
 use crate::ast::{Expr, Span, Stmt};
 use crate::error::ManoError;
 use crate::token::{Literal, Token, TokenType};
@@ -14,6 +15,16 @@ pub type Resolutions = HashMap<Span, (usize, usize)>;
 enum FunctionType {
     None,
     Function,
+    Method,
+    Initializer,
+}
+
+/// Tracks class context for validation (this/oCara usage)
+#[derive(Clone, Copy, PartialEq)]
+enum ClassType {
+    None,
+    Class,
+    StaticMethod,
 }
 
 /// Info tracked for each variable in a scope
@@ -32,6 +43,8 @@ pub struct Resolver {
     resolutions: Resolutions,
     /// Current function context
     current_function: FunctionType,
+    /// Current class context
+    current_class: ClassType,
     /// Accumulated errors
     errors: Vec<ManoError>,
 }
@@ -42,6 +55,7 @@ impl Resolver {
             scopes: Vec::new(),
             resolutions: HashMap::new(),
             current_function: FunctionType::None,
+            current_class: ClassType::None,
             errors: Vec::new(),
         }
     }
@@ -165,6 +179,13 @@ impl Resolver {
                     });
                 }
                 if let Some(v) = value {
+                    if self.current_function == FunctionType::Initializer {
+                        self.errors.push(ManoError::Resolution {
+                            message: "E aí, mano? Não pode retornar valor do bora! Já retorna oCara automaticamente."
+                                .to_string(),
+                            span: keyword.span.clone(),
+                        });
+                    }
                     self.resolve_expr(v);
                 }
             }
@@ -193,6 +214,60 @@ impl Resolver {
                 self.resolve_stmt(body);
             }
             Stmt::Break { .. } => {}
+            Stmt::Class { name, methods, .. } => {
+                self.declare(name);
+                self.define(name);
+
+                let enclosing_class = self.current_class;
+                self.current_class = ClassType::Class;
+
+                // Create a scope for "oCara" that wraps all methods
+                self.begin_scope();
+                // Define "oCara" in this scope (slot 0, first in scope)
+                if let Some(scope) = self.scopes.last_mut() {
+                    scope.insert(
+                        "oCara".to_string(),
+                        VarInfo {
+                            defined: true,
+                            used: true, // Don't warn about unused oCara
+                            span: name.span.clone(),
+                            slot: 0,
+                        },
+                    );
+                }
+
+                for method in methods {
+                    if let Stmt::Function {
+                        name,
+                        params,
+                        body,
+                        is_static,
+                        ..
+                    } = method
+                    {
+                        let fn_type = if name.lexeme == INITIALIZER_NAME {
+                            FunctionType::Initializer
+                        } else {
+                            FunctionType::Method
+                        };
+
+                        // Static methods don't have access to oCara
+                        let saved_class = self.current_class;
+                        if *is_static {
+                            self.current_class = ClassType::StaticMethod;
+                        }
+
+                        self.resolve_function(params, body, fn_type);
+
+                        if *is_static {
+                            self.current_class = saved_class;
+                        }
+                    }
+                }
+
+                self.end_scope();
+                self.current_class = enclosing_class;
+            }
         }
     }
 
@@ -285,6 +360,28 @@ impl Resolver {
                 self.resolve_function(params, body, FunctionType::Function);
             }
             Expr::Literal { .. } => {}
+            Expr::Get { object, .. } => {
+                self.resolve_expr(object);
+            }
+            Expr::Set { object, value, .. } => {
+                self.resolve_expr(value);
+                self.resolve_expr(object);
+            }
+            Expr::This { keyword } => {
+                if self.current_class == ClassType::None {
+                    self.errors.push(ManoError::Resolution {
+                        message: "E aí, mano? Não pode usar 'oCara' fora de um bagulho!"
+                            .to_string(),
+                        span: keyword.span.clone(),
+                    });
+                } else if self.current_class == ClassType::StaticMethod {
+                    self.errors.push(ManoError::Resolution {
+                        message: "E aí, mano? Não pode usar 'oCara' em fita estática!".to_string(),
+                        span: keyword.span.clone(),
+                    });
+                }
+                self.resolve_local(keyword);
+            }
         }
     }
 
@@ -634,6 +731,8 @@ mod tests {
                 }),
                 span: 25..35,
             }],
+            is_static: false,
+            is_getter: false,
             span: 0..40,
         }];
 
@@ -654,6 +753,8 @@ mod tests {
                 },
                 span: 25..35,
             }],
+            is_static: false,
+            is_getter: false,
             span: 0..40,
         }];
 
@@ -688,9 +789,13 @@ mod tests {
                         },
                         span: 70..80,
                     }],
+                    is_static: false,
+                    is_getter: false,
                     span: 45..90,
                 },
             ],
+            is_static: false,
+            is_getter: false,
             span: 0..100,
         }];
 
@@ -1571,5 +1676,347 @@ mod tests {
 
         let result = resolver.resolve(&stmts);
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn resolver_resolves_variable_in_method_body() {
+        let resolver = Resolver::new();
+        // bagulho Pessoa { falar(msg) { salve msg; } }
+        let stmts = vec![Stmt::Class {
+            name: Token {
+                token_type: TokenType::Identifier,
+                lexeme: "Pessoa".to_string(),
+                literal: None,
+                span: 8..14,
+            },
+            methods: vec![Stmt::Function {
+                name: Token {
+                    token_type: TokenType::Identifier,
+                    lexeme: "falar".to_string(),
+                    literal: None,
+                    span: 17..22,
+                },
+                params: vec![Token {
+                    token_type: TokenType::Identifier,
+                    lexeme: "msg".to_string(),
+                    literal: None,
+                    span: 23..26,
+                }],
+                body: vec![Stmt::Print {
+                    expression: Expr::Variable {
+                        name: Token {
+                            token_type: TokenType::Identifier,
+                            lexeme: "msg".to_string(),
+                            literal: None,
+                            span: 35..38,
+                        },
+                    },
+                    span: 29..39,
+                }],
+                is_static: false,
+                is_getter: false,
+                span: 17..42,
+            }],
+            span: 0..44,
+        }];
+
+        let resolutions = resolver.resolve(&stmts).unwrap();
+
+        // The variable 'msg' at span 35..38 should be resolved
+        // It's in the method scope (distance 0) at slot 0 (first param)
+        assert_eq!(resolutions.get(&(35..38)), Some(&(0, 0)));
+    }
+
+    #[test]
+    fn resolver_errors_on_duplicate_class_in_same_scope() {
+        let mut resolver = Resolver::new();
+        resolver.begin_scope();
+
+        let stmts = vec![
+            Stmt::Class {
+                name: Token {
+                    token_type: TokenType::Identifier,
+                    lexeme: "Pessoa".to_string(),
+                    literal: None,
+                    span: 8..14,
+                },
+                methods: vec![],
+                span: 0..17,
+            },
+            Stmt::Class {
+                name: Token {
+                    token_type: TokenType::Identifier,
+                    lexeme: "Pessoa".to_string(),
+                    literal: None,
+                    span: 26..32,
+                },
+                methods: vec![],
+                span: 18..35,
+            },
+        ];
+
+        let result = resolver.resolve(&stmts);
+        assert!(result.is_err());
+        let errors = result.unwrap_err();
+        assert_eq!(errors.len(), 1);
+        assert!(
+            matches!(&errors[0], ManoError::Resolution { message, .. } if message.contains("Já tem uma"))
+        );
+    }
+
+    #[test]
+    fn resolver_resolves_get_expression() {
+        let resolver = Resolver::new();
+        // pessoa.nome;
+        let stmts = vec![Stmt::Expression {
+            expression: Expr::Get {
+                object: Box::new(Expr::Variable {
+                    name: Token {
+                        token_type: TokenType::Identifier,
+                        lexeme: "pessoa".to_string(),
+                        literal: None,
+                        span: 0..6,
+                    },
+                }),
+                name: Token {
+                    token_type: TokenType::Identifier,
+                    lexeme: "nome".to_string(),
+                    literal: None,
+                    span: 7..11,
+                },
+            },
+            span: 0..12,
+        }];
+
+        let result = resolver.resolve(&stmts);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn resolver_resolves_set_expression() {
+        let resolver = Resolver::new();
+        // pessoa.nome = "João";
+        let stmts = vec![Stmt::Expression {
+            expression: Expr::Set {
+                object: Box::new(Expr::Variable {
+                    name: Token {
+                        token_type: TokenType::Identifier,
+                        lexeme: "pessoa".to_string(),
+                        literal: None,
+                        span: 0..6,
+                    },
+                }),
+                name: Token {
+                    token_type: TokenType::Identifier,
+                    lexeme: "nome".to_string(),
+                    literal: None,
+                    span: 7..11,
+                },
+                value: Box::new(Expr::Literal {
+                    value: Literal::String("João".to_string()),
+                }),
+            },
+            span: 0..20,
+        }];
+
+        let result = resolver.resolve(&stmts);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn resolver_resolves_chained_get_expression() {
+        let resolver = Resolver::new();
+        // pessoa.endereco.cidade;
+        let stmts = vec![Stmt::Expression {
+            expression: Expr::Get {
+                object: Box::new(Expr::Get {
+                    object: Box::new(Expr::Variable {
+                        name: Token {
+                            token_type: TokenType::Identifier,
+                            lexeme: "pessoa".to_string(),
+                            literal: None,
+                            span: 0..6,
+                        },
+                    }),
+                    name: Token {
+                        token_type: TokenType::Identifier,
+                        lexeme: "endereco".to_string(),
+                        literal: None,
+                        span: 7..15,
+                    },
+                }),
+                name: Token {
+                    token_type: TokenType::Identifier,
+                    lexeme: "cidade".to_string(),
+                    literal: None,
+                    span: 16..22,
+                },
+            },
+            span: 0..23,
+        }];
+
+        let result = resolver.resolve(&stmts);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn resolver_resolves_this_in_method() {
+        // bagulho Pessoa { getOCara() { toma oCara; } }
+        let resolver = Resolver::new();
+        let stmts = vec![Stmt::Class {
+            name: Token {
+                token_type: TokenType::Identifier,
+                lexeme: "Pessoa".to_string(),
+                literal: None,
+                span: 8..14,
+            },
+            methods: vec![Stmt::Function {
+                name: Token {
+                    token_type: TokenType::Identifier,
+                    lexeme: "getOCara".to_string(),
+                    literal: None,
+                    span: 17..25,
+                },
+                params: vec![],
+                body: vec![Stmt::Return {
+                    keyword: Token {
+                        token_type: TokenType::Return,
+                        lexeme: "toma".to_string(),
+                        literal: None,
+                        span: 30..34,
+                    },
+                    value: Some(Expr::This {
+                        keyword: Token {
+                            token_type: TokenType::This,
+                            lexeme: "oCara".to_string(),
+                            literal: None,
+                            span: 35..40,
+                        },
+                    }),
+                    span: 30..41,
+                }],
+                is_static: false,
+                is_getter: false,
+                span: 17..45,
+            }],
+            span: 0..50,
+        }];
+
+        let result = resolver.resolve(&stmts);
+        assert!(result.is_ok(), "Got errors: {:?}", result.unwrap_err());
+    }
+
+    #[test]
+    fn resolver_errors_on_this_outside_class() {
+        // Using oCara at top level should error
+        let resolver = Resolver::new();
+        let stmts = vec![Stmt::Expression {
+            expression: Expr::This {
+                keyword: Token {
+                    token_type: TokenType::This,
+                    lexeme: "oCara".to_string(),
+                    literal: None,
+                    span: 0..5,
+                },
+            },
+            span: 0..6,
+        }];
+
+        let result = resolver.resolve(&stmts);
+        assert!(result.is_err());
+        let errors = result.unwrap_err();
+        assert!(errors.iter().any(
+            |e| matches!(e, ManoError::Resolution { message, .. } if message.contains("oCara"))
+        ));
+    }
+
+    #[test]
+    fn resolver_errors_on_this_in_function() {
+        // Using oCara in a regular function (not method) should error
+        let resolver = Resolver::new();
+        let stmts = vec![Stmt::Function {
+            name: Token {
+                token_type: TokenType::Identifier,
+                lexeme: "teste".to_string(),
+                literal: None,
+                span: 0..5,
+            },
+            params: vec![],
+            body: vec![Stmt::Expression {
+                expression: Expr::This {
+                    keyword: Token {
+                        token_type: TokenType::This,
+                        lexeme: "oCara".to_string(),
+                        literal: None,
+                        span: 20..25,
+                    },
+                },
+                span: 20..26,
+            }],
+            is_static: false,
+            is_getter: false,
+            span: 0..30,
+        }];
+
+        let result = resolver.resolve(&stmts);
+        assert!(result.is_err());
+        let errors = result.unwrap_err();
+        assert!(errors.iter().any(
+            |e| matches!(e, ManoError::Resolution { message, .. } if message.contains("oCara"))
+        ));
+    }
+
+    // === static methods ===
+
+    #[test]
+    fn resolver_errors_on_this_in_static_method() {
+        // Using oCara in a static method should error
+        // bagulho Pessoa { bagulho teste() { toma oCara; } }
+        let resolver = Resolver::new();
+        let stmts = vec![Stmt::Class {
+            name: Token {
+                token_type: TokenType::Identifier,
+                lexeme: "Pessoa".to_string(),
+                literal: None,
+                span: 8..14,
+            },
+            methods: vec![Stmt::Function {
+                name: Token {
+                    token_type: TokenType::Identifier,
+                    lexeme: "teste".to_string(),
+                    literal: None,
+                    span: 24..29,
+                },
+                params: vec![],
+                body: vec![Stmt::Return {
+                    keyword: Token {
+                        token_type: TokenType::Return,
+                        lexeme: "toma".to_string(),
+                        literal: None,
+                        span: 35..39,
+                    },
+                    value: Some(Expr::This {
+                        keyword: Token {
+                            token_type: TokenType::This,
+                            lexeme: "oCara".to_string(),
+                            literal: None,
+                            span: 40..45,
+                        },
+                    }),
+                    span: 35..46,
+                }],
+                is_static: true,
+                is_getter: false,
+                span: 24..50,
+            }],
+            span: 0..55,
+        }];
+
+        let result = resolver.resolve(&stmts);
+        assert!(result.is_err(), "should error on oCara in static method");
+        let errors = result.unwrap_err();
+        assert!(errors.iter().any(
+            |e| matches!(e, ManoError::Resolution { message, .. } if message.contains("oCara"))
+        ));
     }
 }

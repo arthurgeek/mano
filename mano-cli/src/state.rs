@@ -1,3 +1,5 @@
+use mano::KEYWORDS;
+
 pub struct ReplState {
     buffer: String,
     brace_depth: usize,
@@ -91,7 +93,22 @@ impl ReplState {
             return false;
         }
         // If it ends with semicolon, it's a statement
-        !code.ends_with(';')
+        if code.ends_with(';') {
+            return false;
+        }
+
+        // Don't auto-print if it starts with a keyword (incomplete statement)
+        // Let the parser give proper error message
+        for (keyword, _) in KEYWORDS {
+            if let Some(after_keyword) = code.strip_prefix(keyword) {
+                // Make sure it's followed by a space or end of string (not just a prefix match)
+                if after_keyword.is_empty() || after_keyword.starts_with(' ') {
+                    return false;
+                }
+            }
+        }
+
+        true
     }
 
     /// Wrap input in a print statement for auto-printing
@@ -256,6 +273,20 @@ mod tests {
     fn should_not_auto_print_mixed_comments_only() {
         // Block comment followed by line comment = no code
         assert!(!ReplState::should_auto_print("/* a */ // b"));
+    }
+
+    #[test]
+    fn should_not_auto_print_statements_missing_semicolon() {
+        // Incomplete statements should not be wrapped - let parser error properly
+        assert!(!ReplState::should_auto_print("salve a"));
+        assert!(!ReplState::should_auto_print("oiSumida a"));
+        assert!(!ReplState::should_auto_print("seLiga x = 1"));
+        assert!(!ReplState::should_auto_print("olhaEssaFita foo() { }"));
+        assert!(!ReplState::should_auto_print("bagulho Pessoa {}"));
+        assert!(!ReplState::should_auto_print("sePá x"));
+        assert!(!ReplState::should_auto_print("segueOFluxo x"));
+        assert!(!ReplState::should_auto_print("seVira x"));
+        assert!(!ReplState::should_auto_print("toma x"));
     }
 
     #[test]

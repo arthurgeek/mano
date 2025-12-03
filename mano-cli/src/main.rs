@@ -3,6 +3,7 @@ mod report;
 mod state;
 
 use std::fs;
+use std::io::{self, IsTerminal, Read};
 use std::path::Path;
 use std::process::ExitCode;
 
@@ -20,7 +21,14 @@ fn main() -> ExitCode {
     let mut mano = Mano::new();
 
     let result = match args.len() {
-        0 => run_repl(&mut mano),
+        0 => {
+            // Check if stdin is a terminal (interactive) or a pipe
+            if io::stdin().is_terminal() {
+                run_repl(&mut mano)
+            } else {
+                run_stdin(&mut mano)
+            }
+        }
         1 => run_file(&mut mano, Path::new(&args[0])),
         _ => {
             eprintln!("Uso: mano [script]");
@@ -31,18 +39,40 @@ fn main() -> ExitCode {
     match result {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
-            eprintln!("{e}");
+            // Only print error if it has a message (not already reported)
+            let msg = e.to_string();
+            if !msg.is_empty() {
+                eprintln!("{e}");
+            }
             ExitCode::from(65)
         }
     }
 }
 
 fn run_file(mano: &mut Mano, path: &Path) -> Result<(), ManoError> {
-    let source = fs::read_to_string(path)?;
+    let source = fs::read_to_string(path)?; // IO errors propagate (will be printed)
     let filename = path.to_string_lossy();
     let errors = mano.run(&source, std::io::stdout());
     for error in &errors {
         report_error(error, &source, Some(&filename), std::io::stderr());
+    }
+    if !errors.is_empty() {
+        // Script errors already reported, just signal failure
+        return Err(ManoError::ScriptFailed);
+    }
+    Ok(())
+}
+
+fn run_stdin(mano: &mut Mano) -> Result<(), ManoError> {
+    let mut source = String::new();
+    io::stdin().read_to_string(&mut source)?; // IO errors propagate (will be printed)
+    let errors = mano.run(&source, std::io::stdout());
+    for error in &errors {
+        report_error(error, &source, None, std::io::stderr());
+    }
+    if !errors.is_empty() {
+        // Script errors already reported, just signal failure
+        return Err(ManoError::ScriptFailed);
     }
     Ok(())
 }
@@ -95,4 +125,26 @@ fn run_repl(mano: &mut Mano) -> Result<(), ManoError> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+    use tempfile::NamedTempFile;
+
+    #[test]
+    fn run_file_with_script_error_returns_script_failed() {
+        let mut file = NamedTempFile::new().unwrap();
+        writeln!(file, "@").unwrap();
+
+        let mut mano = Mano::new();
+        let result = run_file(&mut mano, file.path());
+
+        assert!(result.is_err());
+        assert!(
+            matches!(result.unwrap_err(), ManoError::ScriptFailed),
+            "Expected ManoError::ScriptFailed"
+        );
+    }
 }

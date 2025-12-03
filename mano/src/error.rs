@@ -25,6 +25,9 @@ pub enum ManoError {
 
     #[error("")]
     Return(Value),
+
+    #[error("")]
+    ScriptFailed, // Script errors already reported, just signal failure
 }
 
 #[cfg(test)]

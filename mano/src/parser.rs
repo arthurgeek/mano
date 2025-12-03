@@ -44,6 +44,8 @@ impl Parser {
         let result = if is_named_function {
             self.advance(); // consume 'olhaEssaFita'
             self.function_declaration()
+        } else if self.match_types(&[TokenType::Class]) {
+            self.class_declaration()
         } else if self.match_types(&[TokenType::Var]) {
             self.var_declaration()
         } else {
@@ -62,6 +64,10 @@ impl Parser {
 
     fn function_declaration(&mut self) -> Result<Stmt, ManoError> {
         let start = self.previous().span.start;
+        self.function(start, false)
+    }
+
+    fn function(&mut self, start: usize, is_static: bool) -> Result<Stmt, ManoError> {
         let name = self
             .consume(TokenType::Identifier, "Cadê o nome da fita, tio?")?
             .clone();
@@ -106,6 +112,95 @@ impl Parser {
             name,
             params,
             body,
+            is_static,
+            is_getter: false,
+            span: start..end,
+        })
+    }
+
+    /// Parse a method inside a class - can be regular method or getter (no parens)
+    fn method(&mut self, start: usize, is_static: bool) -> Result<Stmt, ManoError> {
+        let name = self
+            .consume(TokenType::Identifier, "Cadê o nome da fita, tio?")?
+            .clone();
+
+        // Check if it's a getter (no parentheses - directly to body)
+        let is_getter = self.check(&TokenType::LeftBrace);
+
+        let mut params = Vec::new();
+        if !is_getter {
+            self.consume(
+                TokenType::LeftParen,
+                "Cadê o '(' depois do nome da fita, maluco?",
+            )?;
+
+            if !self.check(&TokenType::RightParen) {
+                loop {
+                    if params.len() >= 255 {
+                        self.errors.push(ManoError::Parse {
+                            message: "Não pode ter mais de 255 parâmetros, véi!".to_string(),
+                            span: self.peek().span.clone(),
+                        });
+                    }
+                    params.push(
+                        self.consume(TokenType::Identifier, "Cadê o nome do parâmetro, parça?")?
+                            .clone(),
+                    );
+                    if !self.match_types(&[TokenType::Comma]) {
+                        break;
+                    }
+                }
+            }
+
+            self.consume(
+                TokenType::RightParen,
+                "Cadê o ')' depois dos parâmetros, chapa?",
+            )?;
+        }
+
+        self.consume(
+            TokenType::LeftBrace,
+            "Cadê o '{' antes do corpo da fita, tio?",
+        )?;
+
+        let body = self.block_statements()?;
+        let end = self.previous().span.end;
+
+        Ok(Stmt::Function {
+            name,
+            params,
+            body,
+            is_static,
+            is_getter,
+            span: start..end,
+        })
+    }
+
+    fn class_declaration(&mut self) -> Result<Stmt, ManoError> {
+        let start = self.previous().span.start;
+        let name = self
+            .consume(TokenType::Identifier, "Cadê o nome do bagulho, tio?")?
+            .clone();
+
+        self.consume(TokenType::LeftBrace, "Cadê o '{' antes das fitas, mano?")?;
+
+        let mut methods = Vec::new();
+        while !self.check(&TokenType::RightBrace) && !self.is_at_end() {
+            let is_static = self.match_types(&[TokenType::Class]);
+            let method_start = self.peek().span.start;
+            methods.push(self.method(method_start, is_static)?);
+        }
+
+        self.consume(
+            TokenType::RightBrace,
+            "Esperava '}' no final do bagulho, véi!",
+        )?;
+
+        let end = self.previous().span.end;
+
+        Ok(Stmt::Class {
+            name,
+            methods,
             span: start..end,
         })
     }
@@ -386,6 +481,14 @@ impl Parser {
                 });
             }
 
+            if let Expr::Get { object, name } = expr {
+                return Ok(Expr::Set {
+                    object,
+                    name,
+                    value: Box::new(value),
+                });
+            }
+
             return Err(ManoError::Parse {
                 message: "Isso aí não dá pra atribuir, parça!".to_string(),
                 span: equals.span.clone(),
@@ -547,6 +650,17 @@ impl Parser {
         loop {
             if self.match_types(&[TokenType::LeftParen]) {
                 expr = self.finish_call(expr)?;
+            } else if self.match_types(&[TokenType::Dot]) {
+                let name = self
+                    .consume(
+                        TokenType::Identifier,
+                        "Cadê o nome do rolê depois do '.', mano?",
+                    )?
+                    .clone();
+                expr = Expr::Get {
+                    object: Box::new(expr),
+                    name,
+                };
             } else {
                 break;
             }
@@ -639,6 +753,11 @@ impl Parser {
             TokenType::Fun => {
                 self.advance(); // consume 'olhaEssaFita'
                 self.lambda()
+            }
+            TokenType::This => {
+                let keyword = token.clone();
+                self.advance();
+                Ok(Expr::This { keyword })
             }
             _ => Err(ManoError::Parse {
                 message: "Cadê a expressão, jão?".to_string(),
@@ -884,6 +1003,19 @@ mod tests {
                         value: Literal::Nil
                     }
                 ));
+            }
+            _ => panic!("expected expression statement"),
+        }
+    }
+
+    #[test]
+    fn parses_this_expression() {
+        let tokens = vec![make_token(TokenType::This, "oCara", None), semi(), eof()];
+        let mut parser = Parser::new(tokens);
+        let stmts = parser.parse().unwrap();
+        match &stmts[0] {
+            Stmt::Expression { expression, .. } => {
+                assert!(matches!(expression, Expr::This { .. }));
             }
             _ => panic!("expected expression statement"),
         }
@@ -1374,6 +1506,113 @@ mod tests {
         match &stmts[0] {
             Stmt::Expression { expression, .. } => {
                 assert!(matches!(expression, Expr::Assign { name, .. } if name.lexeme == "x"));
+            }
+            _ => panic!("expected expression statement"),
+        }
+    }
+
+    #[test]
+    fn parses_set_expression() {
+        // pessoa.nome = "João";
+        let tokens = vec![
+            make_token(TokenType::Identifier, "pessoa", None),
+            make_token(TokenType::Dot, ".", None),
+            make_token(TokenType::Identifier, "nome", None),
+            make_token(TokenType::Equal, "=", None),
+            make_token(
+                TokenType::String,
+                "João",
+                Some(Literal::String("João".to_string())),
+            ),
+            semi(),
+            eof(),
+        ];
+        let mut parser = Parser::new(tokens);
+        let stmts = parser.parse().unwrap();
+        assert_eq!(stmts.len(), 1);
+        match &stmts[0] {
+            Stmt::Expression { expression, .. } => {
+                assert!(matches!(
+                    expression,
+                    Expr::Set { name, .. } if name.lexeme == "nome"
+                ));
+            }
+            _ => panic!("expected expression statement"),
+        }
+    }
+
+    #[test]
+    fn parses_chained_set_expression() {
+        // pessoa.endereco.cidade = "São Paulo";
+        let tokens = vec![
+            make_token(TokenType::Identifier, "pessoa", None),
+            make_token(TokenType::Dot, ".", None),
+            make_token(TokenType::Identifier, "endereco", None),
+            make_token(TokenType::Dot, ".", None),
+            make_token(TokenType::Identifier, "cidade", None),
+            make_token(TokenType::Equal, "=", None),
+            make_token(
+                TokenType::String,
+                "São Paulo",
+                Some(Literal::String("São Paulo".to_string())),
+            ),
+            semi(),
+            eof(),
+        ];
+        let mut parser = Parser::new(tokens);
+        let stmts = parser.parse().unwrap();
+        assert_eq!(stmts.len(), 1);
+        match &stmts[0] {
+            Stmt::Expression { expression, .. } => {
+                // Outer Set (cidade)
+                match expression {
+                    Expr::Set { object, name, .. } => {
+                        assert_eq!(name.lexeme, "cidade");
+                        // Inner Get (pessoa.endereco)
+                        assert!(matches!(
+                            object.as_ref(),
+                            Expr::Get { name, .. } if name.lexeme == "endereco"
+                        ));
+                    }
+                    _ => panic!("expected Set expression"),
+                }
+            }
+            _ => panic!("expected expression statement"),
+        }
+    }
+
+    #[test]
+    fn parses_set_after_call() {
+        // getPessoa().nome = "João";
+        let tokens = vec![
+            make_token(TokenType::Identifier, "getPessoa", None),
+            make_token(TokenType::LeftParen, "(", None),
+            make_token(TokenType::RightParen, ")", None),
+            make_token(TokenType::Dot, ".", None),
+            make_token(TokenType::Identifier, "nome", None),
+            make_token(TokenType::Equal, "=", None),
+            make_token(
+                TokenType::String,
+                "João",
+                Some(Literal::String("João".to_string())),
+            ),
+            semi(),
+            eof(),
+        ];
+        let mut parser = Parser::new(tokens);
+        let stmts = parser.parse().unwrap();
+        assert_eq!(stmts.len(), 1);
+        match &stmts[0] {
+            Stmt::Expression { expression, .. } => {
+                // Set expression
+                match expression {
+                    Expr::Set { object, name, .. } => {
+                        assert_eq!(name.lexeme, "nome");
+                        // Object should be a Call
+                        assert!(matches!(object.as_ref(), Expr::Call { .. }));
+                    }
+                    _ => panic!("expected Set expression"),
+                }
             }
             _ => panic!("expected expression statement"),
         }
@@ -2403,6 +2642,95 @@ mod tests {
         assert!(matches!(&errors[0], ManoError::Parse { .. }));
     }
 
+    #[test]
+    fn parses_get_expression() {
+        // pessoa.nome;
+        let tokens = vec![
+            make_token(TokenType::Identifier, "pessoa", None),
+            make_token(TokenType::Dot, ".", None),
+            make_token(TokenType::Identifier, "nome", None),
+            semi(),
+            eof(),
+        ];
+        let mut parser = Parser::new(tokens);
+        let stmts = parser.parse().unwrap();
+        assert_eq!(stmts.len(), 1);
+        match &stmts[0] {
+            Stmt::Expression { expression, .. } => {
+                assert!(matches!(
+                    expression,
+                    Expr::Get { name, .. } if name.lexeme == "nome"
+                ));
+            }
+            _ => panic!("expected expression statement"),
+        }
+    }
+
+    #[test]
+    fn parses_chained_get_expression() {
+        // pessoa.endereco.cidade;
+        let tokens = vec![
+            make_token(TokenType::Identifier, "pessoa", None),
+            make_token(TokenType::Dot, ".", None),
+            make_token(TokenType::Identifier, "endereco", None),
+            make_token(TokenType::Dot, ".", None),
+            make_token(TokenType::Identifier, "cidade", None),
+            semi(),
+            eof(),
+        ];
+        let mut parser = Parser::new(tokens);
+        let stmts = parser.parse().unwrap();
+        assert_eq!(stmts.len(), 1);
+        match &stmts[0] {
+            Stmt::Expression { expression, .. } => {
+                // Outer Get (cidade)
+                match expression {
+                    Expr::Get { object, name } => {
+                        assert_eq!(name.lexeme, "cidade");
+                        // Inner Get (endereco)
+                        assert!(matches!(
+                            object.as_ref(),
+                            Expr::Get { name, .. } if name.lexeme == "endereco"
+                        ));
+                    }
+                    _ => panic!("expected Get expression"),
+                }
+            }
+            _ => panic!("expected expression statement"),
+        }
+    }
+
+    #[test]
+    fn parses_get_after_call() {
+        // getPessoa().nome;
+        let tokens = vec![
+            make_token(TokenType::Identifier, "getPessoa", None),
+            make_token(TokenType::LeftParen, "(", None),
+            make_token(TokenType::RightParen, ")", None),
+            make_token(TokenType::Dot, ".", None),
+            make_token(TokenType::Identifier, "nome", None),
+            semi(),
+            eof(),
+        ];
+        let mut parser = Parser::new(tokens);
+        let stmts = parser.parse().unwrap();
+        assert_eq!(stmts.len(), 1);
+        match &stmts[0] {
+            Stmt::Expression { expression, .. } => {
+                // Outer Get
+                match expression {
+                    Expr::Get { object, name } => {
+                        assert_eq!(name.lexeme, "nome");
+                        // Inner Call
+                        assert!(matches!(object.as_ref(), Expr::Call { .. }));
+                    }
+                    _ => panic!("expected Get expression"),
+                }
+            }
+            _ => panic!("expected expression statement"),
+        }
+    }
+
     // === function declarations ===
 
     #[test]
@@ -2504,6 +2832,35 @@ mod tests {
         }
         tokens.push(make_token(TokenType::RightParen, ")", None));
         tokens.push(make_token(TokenType::LeftBrace, "{", None));
+        tokens.push(make_token(TokenType::RightBrace, "}", None));
+        tokens.push(eof());
+
+        let mut parser = Parser::new(tokens);
+        parser.parse().unwrap();
+        let errors = parser.take_errors();
+        assert_eq!(errors.len(), 1);
+        assert!(matches!(&errors[0], ManoError::Parse { .. }));
+    }
+
+    #[test]
+    fn error_on_method_with_too_many_parameters() {
+        // bagulho Foo { bar(p0, p1, ..., p255) {} }
+        let mut tokens = vec![
+            make_token(TokenType::Class, "bagulho", None),
+            make_token(TokenType::Identifier, "Foo", None),
+            make_token(TokenType::LeftBrace, "{", None),
+            make_token(TokenType::Identifier, "bar", None),
+            make_token(TokenType::LeftParen, "(", None),
+        ];
+        for i in 0..256 {
+            tokens.push(make_token(TokenType::Identifier, &format!("p{}", i), None));
+            if i < 255 {
+                tokens.push(make_token(TokenType::Comma, ",", None));
+            }
+        }
+        tokens.push(make_token(TokenType::RightParen, ")", None));
+        tokens.push(make_token(TokenType::LeftBrace, "{", None));
+        tokens.push(make_token(TokenType::RightBrace, "}", None));
         tokens.push(make_token(TokenType::RightBrace, "}", None));
         tokens.push(eof());
 
@@ -2695,5 +3052,199 @@ mod tests {
         let errors = parser.take_errors();
         assert_eq!(errors.len(), 1);
         assert!(matches!(&errors[0], ManoError::Parse { message, .. } if message.contains("255")));
+    }
+
+    #[test]
+    fn parses_empty_class() {
+        let tokens = vec![
+            make_token(TokenType::Class, "bagulho", None),
+            make_token(TokenType::Identifier, "Vazio", None),
+            make_token(TokenType::LeftBrace, "{", None),
+            make_token(TokenType::RightBrace, "}", None),
+            eof(),
+        ];
+
+        let mut parser = Parser::new(tokens);
+        let statements = parser.parse().unwrap();
+
+        assert_eq!(statements.len(), 1);
+        match &statements[0] {
+            Stmt::Class { name, methods, .. } => {
+                assert_eq!(name.lexeme, "Vazio");
+                assert_eq!(methods.len(), 0);
+            }
+            _ => panic!("Expected Class statement"),
+        }
+    }
+
+    #[test]
+    fn parses_class_with_method() {
+        let tokens = vec![
+            make_token(TokenType::Class, "bagulho", None),
+            make_token(TokenType::Identifier, "Pessoa", None),
+            make_token(TokenType::LeftBrace, "{", None),
+            // method: falar() { }
+            make_token(TokenType::Identifier, "falar", None),
+            make_token(TokenType::LeftParen, "(", None),
+            make_token(TokenType::RightParen, ")", None),
+            make_token(TokenType::LeftBrace, "{", None),
+            make_token(TokenType::RightBrace, "}", None),
+            make_token(TokenType::RightBrace, "}", None),
+            eof(),
+        ];
+
+        let mut parser = Parser::new(tokens);
+        let statements = parser.parse().unwrap();
+
+        assert_eq!(statements.len(), 1);
+        match &statements[0] {
+            Stmt::Class { name, methods, .. } => {
+                assert_eq!(name.lexeme, "Pessoa");
+                assert_eq!(methods.len(), 1);
+                match &methods[0] {
+                    Stmt::Function { name, .. } => {
+                        assert_eq!(name.lexeme, "falar");
+                    }
+                    _ => panic!("Expected Function in methods"),
+                }
+            }
+            _ => panic!("Expected Class statement"),
+        }
+    }
+
+    #[test]
+    fn error_on_class_missing_name() {
+        let tokens = vec![
+            make_token(TokenType::Class, "bagulho", None),
+            make_token(TokenType::LeftBrace, "{", None),
+            eof(),
+        ];
+
+        let mut parser = Parser::new(tokens);
+        parser.parse().unwrap();
+        let errors = parser.take_errors();
+
+        assert_eq!(errors.len(), 1);
+        assert!(
+            matches!(&errors[0], ManoError::Parse { message, .. } if message.contains("nome do bagulho"))
+        );
+    }
+
+    #[test]
+    fn error_on_class_missing_left_brace() {
+        let tokens = vec![
+            make_token(TokenType::Class, "bagulho", None),
+            make_token(TokenType::Identifier, "Pessoa", None),
+            eof(),
+        ];
+
+        let mut parser = Parser::new(tokens);
+        parser.parse().unwrap();
+        let errors = parser.take_errors();
+
+        assert_eq!(errors.len(), 1);
+        assert!(
+            matches!(&errors[0], ManoError::Parse { message, .. } if message.contains("'{' antes das fitas"))
+        );
+    }
+
+    #[test]
+    fn error_on_class_missing_right_brace() {
+        let tokens = vec![
+            make_token(TokenType::Class, "bagulho", None),
+            make_token(TokenType::Identifier, "Pessoa", None),
+            make_token(TokenType::LeftBrace, "{", None),
+            eof(),
+        ];
+
+        let mut parser = Parser::new(tokens);
+        parser.parse().unwrap();
+        let errors = parser.take_errors();
+
+        assert_eq!(errors.len(), 1);
+        assert!(
+            matches!(&errors[0], ManoError::Parse { message, .. } if message.contains("'}' no final do bagulho"))
+        );
+    }
+
+    // === static methods ===
+
+    #[test]
+    fn parses_static_method_in_class() {
+        // bagulho Pessoa { bagulho criar() {} }
+        let tokens = vec![
+            make_token(TokenType::Class, "bagulho", None),
+            make_token(TokenType::Identifier, "Pessoa", None),
+            make_token(TokenType::LeftBrace, "{", None),
+            make_token(TokenType::Class, "bagulho", None), // static marker
+            make_token(TokenType::Identifier, "criar", None),
+            make_token(TokenType::LeftParen, "(", None),
+            make_token(TokenType::RightParen, ")", None),
+            make_token(TokenType::LeftBrace, "{", None),
+            make_token(TokenType::RightBrace, "}", None),
+            make_token(TokenType::RightBrace, "}", None),
+            eof(),
+        ];
+
+        let mut parser = Parser::new(tokens);
+        let stmts = parser.parse().unwrap();
+
+        assert_eq!(stmts.len(), 1);
+        match &stmts[0] {
+            Stmt::Class { methods, .. } => {
+                assert_eq!(methods.len(), 1);
+                match &methods[0] {
+                    Stmt::Function {
+                        name, is_static, ..
+                    } => {
+                        assert_eq!(name.lexeme, "criar");
+                        assert!(is_static, "method should be static");
+                    }
+                    _ => panic!("expected function"),
+                }
+            }
+            _ => panic!("expected class"),
+        }
+    }
+
+    #[test]
+    fn parses_getter_method_without_parens() {
+        // bagulho Pessoa { idade {} }
+        // getter: method without () in definition
+        let tokens = vec![
+            make_token(TokenType::Class, "bagulho", None),
+            make_token(TokenType::Identifier, "Pessoa", None),
+            make_token(TokenType::LeftBrace, "{", None),
+            make_token(TokenType::Identifier, "idade", None),
+            // NO LeftParen/RightParen - this makes it a getter
+            make_token(TokenType::LeftBrace, "{", None),
+            make_token(TokenType::RightBrace, "}", None),
+            make_token(TokenType::RightBrace, "}", None),
+            eof(),
+        ];
+
+        let mut parser = Parser::new(tokens);
+        let stmts = parser.parse().unwrap();
+
+        assert_eq!(stmts.len(), 1);
+        match &stmts[0] {
+            Stmt::Class { methods, .. } => {
+                assert_eq!(methods.len(), 1);
+                match &methods[0] {
+                    Stmt::Function {
+                        name,
+                        is_getter,
+                        params,
+                        ..
+                    } => {
+                        assert_eq!(name.lexeme, "idade");
+                        assert!(is_getter, "method should be a getter");
+                        assert!(params.is_empty(), "getter should have no params");
+                    }
+                    _ => panic!("expected function"),
+                }
+            }
+            _ => panic!("expected class"),
+        }
     }
 }

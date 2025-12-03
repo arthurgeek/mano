@@ -77,8 +77,8 @@ pub fn report_error<W: Write>(
                 .write(src, &mut writer)
                 .ok();
         }
-        ManoError::Break | ManoError::Return(_) => {
-            // Internal control flow, should never be reported to users
+        ManoError::Break | ManoError::Return(_) | ManoError::ScriptFailed => {
+            // Internal control flow or already reported, should not be reported to users
         }
     }
 }

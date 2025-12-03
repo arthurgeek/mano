@@ -57,6 +57,14 @@
           "match": "\\b(olhaEssaFita)\\b"
         },
         {
+          "name": "keyword.other.class.mano",
+          "match": "\\b(bagulho)\\b"
+        },
+        {
+          "name": "variable.language.this.mano",
+          "match": "\\b(oCara)\\b"
+        },
+        {
           "name": "keyword.other.mano",
           "match": "\\b(salve|oiSumida|seLiga|tamoJunto|ow)\\b"
         },

@@ -1,0 +1,170 @@
+// Classes (bagulhos) em mano!
+// Bagulho é coisa, parada é instância
+
+// === Classe simples ===
+bagulho Carro {
+    buzinar() {
+        salve "BIIIIII!";
+    }
+
+    pipocar() {
+        salve "vruum vruum!";
+    }
+}
+
+seLiga meuCarro = Carro();
+salve meuCarro;  // <parada Carro>
+
+meuCarro.buzinar();  // BIIIIII!
+meuCarro.pipocar();  // vruum vruum!
+
+// === Campos (esquemas) ===
+// Campos são dinâmicos - cria quando atribui
+meuCarro.cor = "vermelho";
+meuCarro.ano = 2024;
+
+salve "Meu carro:";
+salve meuCarro.cor;  // vermelho
+salve meuCarro.ano;  // 2024
+
+// === Cada parada tem seus próprios campos ===
+seLiga outroCarro = Carro();
+outroCarro.cor = "azul";
+
+salve "Cores:";
+salve meuCarro.cor;    // vermelho
+salve outroCarro.cor;  // azul
+
+// === Campo pode sombrear método ===
+salve "Antes: método";
+meuCarro.buzinar();  // BIIIIII!
+
+meuCarro.buzinar = "silencioso";
+salve "Depois: campo";
+salve meuCarro.buzinar;  // silencioso
+
+// === Métodos são fitas de primeira classe ===
+seLiga barulho = outroCarro.buzinar;
+barulho();  // BIIIIII!
+
+// === bora - construtor (inicializador) ===
+bagulho Pessoa {
+    bora(nome, idade) {
+        oCara.nome = nome;
+        oCara.idade = idade;
+    }
+
+    apresentar() {
+        salve "E aí, sou " + oCara.nome + " e tenho " + oCara.idade + " anos!";
+    }
+}
+
+seLiga joao = Pessoa("João", "25");
+joao.apresentar();  // E aí, sou João e tenho 25 anos!
+
+seLiga maria = Pessoa("Maria", "30");
+maria.apresentar();  // E aí, sou Maria e tenho 30 anos!
+
+// === oCara - referência à instância ===
+bagulho Contador {
+    bora() {
+        oCara.valor = 0;  // inicializa no bora!
+    }
+
+    incrementar() {
+        oCara.valor = oCara.valor + 1;
+    }
+
+    getValor() {
+        toma oCara.valor;
+    }
+}
+
+seLiga c = Contador();  // bora() é chamado automaticamente
+
+c.incrementar();
+salve c.getValor();  // 1
+
+c.incrementar();
+c.incrementar();
+salve c.getValor();  // 3
+
+// === Métodos que retornam oCara (fluent interface) ===
+bagulho Builder {
+    setNome(n) {
+        oCara.nome = n;
+        toma oCara;
+    }
+
+    setIdade(i) {
+        oCara.idade = i;
+        toma oCara;
+    }
+
+    mostrar() {
+        salve oCara.nome + " tem " + oCara.idade + " anos";
+    }
+}
+
+seLiga b = Builder();
+b.setNome("João").setIdade("25").mostrar();  // João tem 25 anos
+
+// === Métodos estáticos ===
+// Usa 'bagulho' dentro da classe pra definir método estático
+bagulho Matematica {
+    bagulho dobrar(x) {
+        toma x * 2;
+    }
+
+    bagulho triplicar(x) {
+        toma x * 3;
+    }
+
+    bagulho somar(a, b) {
+        toma a + b;
+    }
+}
+
+// Chama direto no bagulho, não precisa criar parada
+salve "=== Métodos estáticos ===";
+salve Matematica.dobrar(21);    // 42
+salve Matematica.triplicar(7);  // 21
+salve Matematica.somar(10, 32); // 42
+
+// Não dá pra chamar estático na parada
+// seLiga m = Matematica();
+// m.dobrar(5);  // ERRO! Método estático só no bagulho!
+
+// === Getters ===
+// Método sem parênteses vira getter - executa automaticamente
+bagulho Circulo {
+    bora(raio) {
+        oCara.raio = raio;
+    }
+
+    // Getters: sem () na definição = auto-executa no acesso
+    area {
+        toma 3.14159 * oCara.raio * oCara.raio;
+    }
+
+    diametro {
+        toma oCara.raio * 2;
+    }
+
+    // Método normal (precisa de ())
+    descrever() {
+        salve "Círculo calculado!";
+        salve oCara.area;
+    }
+}
+
+salve "=== Getters ===";
+seLiga circ = Circulo(5);
+salve circ.area;      // 78.53975 (getter auto-executado!)
+salve circ.diametro;  // 10
+circ.descrever();     // Círculo calculado! + área
+
+// Getter vs método normal:
+// circ.area      -> executa automaticamente (getter)
+// circ.descrever -> retorna a função (método)
+// circ.descrever() -> executa o método

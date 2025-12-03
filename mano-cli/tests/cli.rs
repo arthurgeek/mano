@@ -61,19 +61,18 @@ fn repl_evaluates_expression() {
 
 #[test]
 fn repl_recovers_after_error() {
-    // Error on first line, second line should still work
+    // Error on first line exits with failure (piped input doesn't recover)
     mano()
         .write_stdin("@\nsalve 1 + 2;\n")
         .assert()
-        .success()
-        .stderr(predicates::str::contains("Tá moscando, Brown?"))
-        .stdout(predicates::str::contains("3"));
+        .failure()
+        .stderr(predicates::str::contains("Tá moscando, Brown?"));
 }
 
 #[test]
 fn repl_errors_use_ariadne_format() {
     let output = mano().write_stdin("@\n").output().unwrap();
-    assert!(output.status.success());
+    assert!(!output.status.success()); // Should fail with error
     let stderr = String::from_utf8_lossy(&output.stderr);
     // Strip ANSI codes for snapshot
     let stderr_clean = strip_ansi(&stderr);
@@ -86,6 +85,7 @@ fn file_errors_show_filename() {
     std::io::Write::write_all(&mut file, b"@\n").unwrap();
 
     let output = mano().arg(file.path()).output().unwrap();
+    assert!(!output.status.success()); // Should fail with error
     let stderr = String::from_utf8_lossy(&output.stderr);
     // Replace temp path with placeholder for snapshot stability
     let stderr_clean = strip_ansi(&stderr).replace(
@@ -147,21 +147,58 @@ fn repl_block_scoping_works() {
 
 #[test]
 fn repl_auto_prints_expressions() {
-    // Expression without semicolon should auto-print result
-    mano()
-        .write_stdin("seLiga a = 1;\na\n")
-        .assert()
-        .success()
-        .stdout(predicates::str::contains("1"))
-        .stderr(predicates::str::is_empty());
+    // Expression without semicolon in piped input should error (no auto-print)
+    mano().write_stdin("seLiga a = 1;\na\n").assert().failure();
 }
 
 #[test]
 fn repl_auto_prints_string_expression() {
+    // Expression without semicolon in piped input should error (no auto-print)
+    mano().write_stdin("\"mano\"\n").assert().failure();
+}
+
+#[test]
+fn piped_input_does_not_auto_print_declarations() {
+    // When stdin is piped (not TTY), declarations should not auto-print
     mano()
-        .write_stdin("\"mano\"\n")
+        .write_stdin("bagulho Pessoa {} seLiga a = Pessoa(); salve a;\n")
         .assert()
         .success()
-        .stdout(predicates::str::contains("mano"))
+        .stdout(predicates::str::contains("<parada Pessoa>"))
         .stderr(predicates::str::is_empty());
+}
+
+#[test]
+fn piped_input_does_not_auto_print_expressions() {
+    // When stdin is piped, expressions without semicolons should error, not auto-print
+    mano()
+        .write_stdin("seLiga a = \"a\";\na\n")
+        .assert()
+        .failure()
+        .stderr(predicates::str::contains("Deu mole"));
+}
+
+#[test]
+fn errors_are_not_printed_twice() {
+    // Errors should only be printed once, not duplicated
+    let output = mano().write_stdin("@\n").output().unwrap();
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    // Count how many times the error message appears
+    let count = stderr.matches("Tá moscando, Brown?").count();
+    assert_eq!(
+        count, 1,
+        "Error message should appear exactly once, but appeared {} times",
+        count
+    );
+}
+
+#[test]
+fn io_errors_are_still_printed() {
+    // IO errors like file not found should be printed
+    let output = mano().arg("nonexistent.mano").output().unwrap();
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    // Should contain IO error message about missing file
+    assert!(stderr.contains("Cadê o arquivo") || stderr.contains("No such file"));
 }

@@ -45,6 +45,18 @@ pub enum Expr {
         params: Vec<Token>,
         body: Vec<Stmt>,
     },
+    Get {
+        object: Box<Expr>,
+        name: Token,
+    },
+    Set {
+        object: Box<Expr>,
+        name: Token,
+        value: Box<Expr>,
+    },
+    This {
+        keyword: Token,
+    },
 }
 
 pub type Span = std::ops::Range<usize>;
@@ -90,11 +102,18 @@ pub enum Stmt {
         name: Token,
         params: Vec<Token>,
         body: Vec<Stmt>,
+        is_static: bool,
+        is_getter: bool,
         span: Span,
     },
     Return {
         keyword: Token,
         value: Option<Expr>,
+        span: Span,
+    },
+    Class {
+        name: Token,
+        methods: Vec<Stmt>,
         span: Span,
     },
 }
@@ -137,6 +156,14 @@ impl Stmt {
         }
     }
 
+    /// Returns (name, methods) if this is a class declaration
+    pub fn class_declaration(&self) -> Option<(&Token, &Vec<Stmt>)> {
+        match self {
+            Stmt::Class { name, methods, .. } => Some((name, methods)),
+            _ => None,
+        }
+    }
+
     pub fn span(&self) -> Span {
         match self {
             Stmt::Expression { span, .. }
@@ -148,7 +175,8 @@ impl Stmt {
             | Stmt::Break { span, .. }
             | Stmt::Else { span, .. }
             | Stmt::Function { span, .. }
-            | Stmt::Return { span, .. } => span.clone(),
+            | Stmt::Return { span, .. }
+            | Stmt::Class { span, .. } => span.clone(),
         }
     }
 }
@@ -246,6 +274,13 @@ impl fmt::Display for Expr {
                 }
                 write!(f, ")")
             }
+            Expr::Get { object, name } => write!(f, "{}.{}", object, name.lexeme),
+            Expr::Set {
+                object,
+                name,
+                value,
+            } => write!(f, "({}.{} = {})", object, name.lexeme, value),
+            Expr::This { .. } => write!(f, "oCara"),
         }
     }
 }
@@ -751,6 +786,8 @@ mod tests {
             name: make_token(TokenType::Identifier, "cumprimentar"),
             params: vec![make_token(TokenType::Identifier, "nome")],
             body: vec![],
+            is_static: false,
+            is_getter: false,
             span: 0..30,
         };
         assert!(matches!(stmt, Stmt::Function { params, .. } if params.len() == 1));
@@ -772,6 +809,8 @@ mod tests {
             name: name.clone(),
             params: params.clone(),
             body: body.clone(),
+            is_static: false,
+            is_getter: false,
             span: 0..30,
         };
 
@@ -804,14 +843,66 @@ mod tests {
     }
 
     #[test]
+    fn stmt_class_declaration_returns_name_and_methods() {
+        let name = make_token(TokenType::Identifier, "Pessoa");
+        let method = Stmt::Function {
+            name: make_token(TokenType::Identifier, "falar"),
+            params: vec![],
+            body: vec![],
+            is_static: false,
+            is_getter: false,
+            span: 10..20,
+        };
+        let stmt = Stmt::Class {
+            name: name.clone(),
+            methods: vec![method],
+            span: 0..30,
+        };
+        let (decl_name, methods) = stmt.class_declaration().unwrap();
+        assert_eq!(decl_name.lexeme, "Pessoa");
+        assert_eq!(methods.len(), 1);
+    }
+
+    #[test]
+    fn stmt_class_declaration_returns_none_for_function() {
+        let stmt = Stmt::Function {
+            name: make_token(TokenType::Identifier, "foo"),
+            params: vec![],
+            body: vec![],
+            is_static: false,
+            is_getter: false,
+            span: 0..10,
+        };
+        assert!(stmt.class_declaration().is_none());
+    }
+
+    #[test]
+    fn stmt_class_declaration_returns_none_for_var() {
+        let stmt = Stmt::var(make_token(TokenType::Identifier, "x"), None);
+        assert!(stmt.class_declaration().is_none());
+    }
+
+    #[test]
     fn stmt_span_returns_span_for_function() {
         let stmt = Stmt::Function {
             name: make_token(TokenType::Identifier, "foo"),
             params: vec![],
             body: vec![],
+            is_static: false,
+            is_getter: false,
             span: 10..50,
         };
         assert_eq!(stmt.span(), 10..50);
+    }
+
+    #[test]
+    fn stmt_span_returns_span_for_return() {
+        let stmt = Stmt::Return {
+            keyword: make_token(TokenType::Return, "toma"),
+            value: None,
+            span: 20..25,
+        };
+        assert_eq!(stmt.span(), 20..25);
     }
 
     #[test]
@@ -833,5 +924,97 @@ mod tests {
             body: vec![],
         };
         assert_eq!(expr.to_string(), "(lambda)");
+    }
+
+    #[test]
+    fn creates_class_statement() {
+        let name = make_token(TokenType::Identifier, "Pessoa");
+        let class = Stmt::Class {
+            name: name.clone(),
+            methods: vec![],
+            span: 0..15,
+        };
+
+        assert_eq!(class.span(), 0..15);
+    }
+
+    #[test]
+    fn class_statement_with_methods() {
+        let name = make_token(TokenType::Identifier, "Pessoa");
+        let method = Stmt::Function {
+            name: make_token(TokenType::Identifier, "falar"),
+            params: vec![],
+            body: vec![],
+            is_static: false,
+            is_getter: false,
+            span: 20..30,
+        };
+        let class = Stmt::Class {
+            name,
+            methods: vec![method],
+            span: 0..40,
+        };
+
+        assert_eq!(class.span(), 0..40);
+        // children() returns empty for Class as methods aren't traversed
+        assert!(class.children().is_empty());
+    }
+
+    #[test]
+    fn creates_get_expression() {
+        let expr = Expr::Get {
+            object: Box::new(Expr::Variable {
+                name: make_token(TokenType::Identifier, "pessoa"),
+            }),
+            name: make_token(TokenType::Identifier, "nome"),
+        };
+        assert!(matches!(expr, Expr::Get { .. }));
+    }
+
+    #[test]
+    fn displays_get_expression() {
+        let expr = Expr::Get {
+            object: Box::new(Expr::Variable {
+                name: make_token(TokenType::Identifier, "pessoa"),
+            }),
+            name: make_token(TokenType::Identifier, "nome"),
+        };
+        assert_eq!(expr.to_string(), "pessoa.nome");
+    }
+
+    #[test]
+    fn creates_set_expression() {
+        let expr = Expr::Set {
+            object: Box::new(Expr::Variable {
+                name: make_token(TokenType::Identifier, "pessoa"),
+            }),
+            name: make_token(TokenType::Identifier, "nome"),
+            value: Box::new(Expr::Literal {
+                value: Literal::String("João".to_string()),
+            }),
+        };
+        assert!(matches!(expr, Expr::Set { .. }));
+    }
+
+    #[test]
+    fn displays_set_expression() {
+        let expr = Expr::Set {
+            object: Box::new(Expr::Variable {
+                name: make_token(TokenType::Identifier, "pessoa"),
+            }),
+            name: make_token(TokenType::Identifier, "nome"),
+            value: Box::new(Expr::Literal {
+                value: Literal::String("João".to_string()),
+            }),
+        };
+        assert_eq!(expr.to_string(), "(pessoa.nome = João)");
+    }
+
+    #[test]
+    fn displays_this_expression() {
+        let expr = Expr::This {
+            keyword: make_token(TokenType::This, "oCara"),
+        };
+        assert_eq!(expr.to_string(), "oCara");
     }
 }
