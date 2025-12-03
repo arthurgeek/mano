@@ -1,4 +1,4 @@
-use crate::ast::{Expr, Stmt};
+use crate::ast::{Expr, InterpolationPart, Stmt};
 use crate::error::ManoError;
 use crate::token::{Literal, Token, TokenType};
 
@@ -750,6 +750,7 @@ impl Parser {
                 self.advance();
                 Ok(Expr::Literal { value })
             }
+            TokenType::StringStart => self.interpolated_string(),
             TokenType::LeftParen => {
                 self.advance();
                 let expr = self.expression()?;
@@ -828,6 +829,47 @@ impl Parser {
         let body = self.block_statements()?;
 
         Ok(Expr::Lambda { params, body })
+    }
+
+    fn interpolated_string(&mut self) -> Result<Expr, ManoError> {
+        let mut parts = Vec::new();
+
+        // Get the first string part from StringStart
+        if let Some(Literal::String(s)) = &self.peek().literal {
+            parts.push(InterpolationPart::Str(s.clone()));
+        }
+        self.advance(); // consume StringStart
+
+        loop {
+            // Parse the expression inside {}
+            let expr = self.expression()?;
+            parts.push(InterpolationPart::Expr(Box::new(expr)));
+
+            // Check for StringMiddle or StringEnd
+            match self.peek().token_type {
+                TokenType::StringMiddle => {
+                    if let Some(Literal::String(s)) = &self.peek().literal {
+                        parts.push(InterpolationPart::Str(s.clone()));
+                    }
+                    self.advance(); // consume StringMiddle
+                }
+                TokenType::StringEnd => {
+                    if let Some(Literal::String(s)) = &self.peek().literal {
+                        parts.push(InterpolationPart::Str(s.clone()));
+                    }
+                    self.advance(); // consume StringEnd
+                    break;
+                }
+                _ => {
+                    return Err(ManoError::Parse {
+                        message: "String interpolada mal formada, mano!".to_string(),
+                        span: self.peek().span.clone(),
+                    });
+                }
+            }
+        }
+
+        Ok(Expr::Interpolation { parts })
     }
 
     fn consume(&mut self, token_type: TokenType, message: &str) -> Result<&Token, ManoError> {
@@ -3372,6 +3414,163 @@ mod tests {
         assert!(!errors.is_empty());
         if let ManoError::Parse { message, .. } = &errors[0] {
             assert!(message.contains("fita") || message.contains("mestre"));
+        }
+    }
+
+    // === interpolation ===
+
+    #[test]
+    fn parses_interpolated_string_simple() {
+        use crate::ast::InterpolationPart;
+        // "Olá, {nome}!"
+        let tokens = vec![
+            make_token(
+                TokenType::StringStart,
+                "\"Olá, {",
+                Some(Literal::String("Olá, ".to_string())),
+            ),
+            make_token(TokenType::Identifier, "nome", None),
+            make_token(
+                TokenType::StringEnd,
+                "}!\"",
+                Some(Literal::String("!".to_string())),
+            ),
+            semi(),
+            eof(),
+        ];
+        let mut parser = Parser::new(tokens);
+        let stmts = parser.parse().unwrap();
+        assert_eq!(stmts.len(), 1);
+        match &stmts[0] {
+            Stmt::Expression { expression, .. } => match expression {
+                Expr::Interpolation { parts } => {
+                    assert_eq!(parts.len(), 3);
+                    assert!(matches!(&parts[0], InterpolationPart::Str(s) if s == "Olá, "));
+                    assert!(
+                        matches!(&parts[1], InterpolationPart::Expr(e) if matches!(e.as_ref(), Expr::Variable { name } if name.lexeme == "nome"))
+                    );
+                    assert!(matches!(&parts[2], InterpolationPart::Str(s) if s == "!"));
+                }
+                _ => panic!("expected Interpolation expression, got {:?}", expression),
+            },
+            _ => panic!("expected expression statement"),
+        }
+    }
+
+    #[test]
+    fn parses_interpolated_string_multiple() {
+        use crate::ast::InterpolationPart;
+        // "{a} + {b} = {c}"
+        let tokens = vec![
+            make_token(
+                TokenType::StringStart,
+                "\"{",
+                Some(Literal::String("".to_string())),
+            ),
+            make_token(TokenType::Identifier, "a", None),
+            make_token(
+                TokenType::StringMiddle,
+                "} + {",
+                Some(Literal::String(" + ".to_string())),
+            ),
+            make_token(TokenType::Identifier, "b", None),
+            make_token(
+                TokenType::StringMiddle,
+                "} = {",
+                Some(Literal::String(" = ".to_string())),
+            ),
+            make_token(TokenType::Identifier, "c", None),
+            make_token(
+                TokenType::StringEnd,
+                "}\"",
+                Some(Literal::String("".to_string())),
+            ),
+            semi(),
+            eof(),
+        ];
+        let mut parser = Parser::new(tokens);
+        let stmts = parser.parse().unwrap();
+        match &stmts[0] {
+            Stmt::Expression { expression, .. } => match expression {
+                Expr::Interpolation { parts } => {
+                    // "" + a + " + " + b + " = " + c + ""
+                    assert_eq!(parts.len(), 7);
+                    assert!(matches!(&parts[0], InterpolationPart::Str(s) if s.is_empty()));
+                    assert!(matches!(&parts[1], InterpolationPart::Expr(_)));
+                    assert!(matches!(&parts[2], InterpolationPart::Str(s) if s == " + "));
+                    assert!(matches!(&parts[3], InterpolationPart::Expr(_)));
+                    assert!(matches!(&parts[4], InterpolationPart::Str(s) if s == " = "));
+                    assert!(matches!(&parts[5], InterpolationPart::Expr(_)));
+                    assert!(matches!(&parts[6], InterpolationPart::Str(s) if s.is_empty()));
+                }
+                _ => panic!("expected Interpolation expression"),
+            },
+            _ => panic!("expected expression statement"),
+        }
+    }
+
+    #[test]
+    fn parses_interpolated_string_with_expression() {
+        use crate::ast::InterpolationPart;
+        // "Total: {1 + 2}"
+        let tokens = vec![
+            make_token(
+                TokenType::StringStart,
+                "\"Total: {",
+                Some(Literal::String("Total: ".to_string())),
+            ),
+            make_token(TokenType::Number, "1", Some(Literal::Number(1.0))),
+            make_token(TokenType::Plus, "+", None),
+            make_token(TokenType::Number, "2", Some(Literal::Number(2.0))),
+            make_token(
+                TokenType::StringEnd,
+                "}\"",
+                Some(Literal::String("".to_string())),
+            ),
+            semi(),
+            eof(),
+        ];
+        let mut parser = Parser::new(tokens);
+        let stmts = parser.parse().unwrap();
+        match &stmts[0] {
+            Stmt::Expression { expression, .. } => match expression {
+                Expr::Interpolation { parts } => {
+                    assert_eq!(parts.len(), 3);
+                    assert!(matches!(&parts[0], InterpolationPart::Str(s) if s == "Total: "));
+                    // The expression should be Binary(1 + 2)
+                    assert!(
+                        matches!(&parts[1], InterpolationPart::Expr(e) if matches!(e.as_ref(), Expr::Binary { .. }))
+                    );
+                    assert!(matches!(&parts[2], InterpolationPart::Str(s) if s.is_empty()));
+                }
+                _ => panic!("expected Interpolation expression"),
+            },
+            _ => panic!("expected expression statement"),
+        }
+    }
+
+    #[test]
+    fn error_on_malformed_interpolation() {
+        // StringStart followed by something other than StringMiddle or StringEnd
+        let tokens = vec![
+            make_token(
+                TokenType::StringStart,
+                "\"Hello {",
+                Some(Literal::String("Hello ".to_string())),
+            ),
+            make_token(TokenType::Identifier, "nome", None),
+            // Missing StringEnd - instead we have semicolon
+            semi(),
+            eof(),
+        ];
+        let mut parser = Parser::new(tokens);
+        let _ = parser.parse();
+        let errors = parser.take_errors();
+        assert!(!errors.is_empty());
+        if let ManoError::Parse { message, .. } = &errors[0] {
+            assert!(message.contains("interpolada"));
+        } else {
+            panic!("Expected Parse error");
         }
     }
 }

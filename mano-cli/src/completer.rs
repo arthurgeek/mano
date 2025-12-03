@@ -92,7 +92,10 @@ impl ManoHelper {
                     // Determine color based on token type
                     let color = match token.token_type {
                         mano::TokenType::Comment => Some(COMMENT),
-                        mano::TokenType::String => Some(STRING),
+                        mano::TokenType::String
+                        | mano::TokenType::StringStart
+                        | mano::TokenType::StringMiddle
+                        | mano::TokenType::StringEnd => Some(STRING),
                         mano::TokenType::Number => Some(NUMBER),
                         mano::TokenType::Identifier => {
                             if variables.contains(&token.lexeme) {

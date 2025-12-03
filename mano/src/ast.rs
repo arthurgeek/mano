@@ -61,6 +61,18 @@ pub enum Expr {
         keyword: Token,
         method: Token,
     },
+    Interpolation {
+        parts: Vec<InterpolationPart>,
+    },
+}
+
+/// A part of an interpolated string
+#[derive(Debug, Clone, PartialEq)]
+pub enum InterpolationPart {
+    /// Literal string content
+    Str(String),
+    /// An expression to be evaluated and converted to string
+    Expr(Box<Expr>),
 }
 
 pub type Span = std::ops::Range<usize>;
@@ -287,6 +299,16 @@ impl fmt::Display for Expr {
             } => write!(f, "({}.{} = {})", object, name.lexeme, value),
             Expr::This { .. } => write!(f, "oCara"),
             Expr::Super { method, .. } => write!(f, "mestre.{}", method.lexeme),
+            Expr::Interpolation { parts } => {
+                write!(f, "(interpolate")?;
+                for part in parts {
+                    match part {
+                        InterpolationPart::Str(s) => write!(f, " \"{}\"", s)?,
+                        InterpolationPart::Expr(e) => write!(f, " {}", e)?,
+                    }
+                }
+                write!(f, ")")
+            }
         }
     }
 }
@@ -1063,5 +1085,19 @@ mod tests {
             method: make_token(TokenType::Identifier, "cozinhar"),
         };
         assert_eq!(expr.to_string(), "mestre.cozinhar");
+    }
+
+    #[test]
+    fn displays_interpolation_expression() {
+        let expr = Expr::Interpolation {
+            parts: vec![
+                InterpolationPart::Str("Olá, ".to_string()),
+                InterpolationPart::Expr(Box::new(Expr::Variable {
+                    name: make_token(TokenType::Identifier, "nome"),
+                })),
+                InterpolationPart::Str("!".to_string()),
+            ],
+        };
+        assert_eq!(expr.to_string(), "(interpolate \"Olá, \" nome \"!\")");
     }
 }

@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use crate::INITIALIZER_NAME;
-use crate::ast::{Expr, Span, Stmt};
+use crate::ast::{Expr, InterpolationPart, Span, Stmt};
 use crate::error::ManoError;
 use crate::token::{Literal, Token, TokenType};
 
@@ -442,6 +442,13 @@ impl Resolver {
                     });
                 }
                 self.resolve_local(keyword);
+            }
+            Expr::Interpolation { parts } => {
+                for part in parts {
+                    if let InterpolationPart::Expr(expr) = part {
+                        self.resolve_expr(expr);
+                    }
+                }
             }
         }
     }
@@ -2353,5 +2360,42 @@ mod tests {
         // - oCara scope
         // - mestre scope <- here
         assert_eq!(resolutions.get(&(47..53)), Some(&(2, 0)));
+    }
+
+    #[test]
+    fn resolver_resolves_interpolation() {
+        use crate::ast::InterpolationPart;
+        // { seLiga nome = "mano"; "Olá, {nome}!"; }
+        let resolver = Resolver::new();
+        let stmts = vec![Stmt::Block {
+            statements: vec![
+                Stmt::Var {
+                    name: make_token("nome", 10..14),
+                    initializer: Some(Expr::Literal {
+                        value: Literal::String("mano".to_string()),
+                    }),
+                    span: 0..20,
+                },
+                Stmt::Expression {
+                    expression: Expr::Interpolation {
+                        parts: vec![
+                            InterpolationPart::Str("Olá, ".to_string()),
+                            InterpolationPart::Expr(Box::new(Expr::Variable {
+                                name: make_token("nome", 30..34),
+                            })),
+                            InterpolationPart::Str("!".to_string()),
+                        ],
+                    },
+                    span: 25..40,
+                },
+            ],
+            span: 0..45,
+        }];
+
+        let result = resolver.resolve(&stmts);
+        assert!(result.is_ok());
+        let resolutions = result.unwrap();
+        // nome at 30..34 should resolve to distance 0, slot 0
+        assert_eq!(resolutions.get(&(30..34)), Some(&(0, 0)));
     }
 }

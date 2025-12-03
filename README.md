@@ -26,7 +26,7 @@ Built with [Claude Code](https://claude.ai/code) — I designed and directed whi
 
 ```
 seLiga nome = "Arthur";
-salve "E aí, " + nome + "!";
+salve "E aí, {nome}!";  // String interpolation!
 
 sePá (firmeza) {
     salve "Tá firmeza, mano!";
@@ -167,6 +167,8 @@ mano implements several [Crafting Interpreters challenges](https://craftinginter
 | Lambda expressions | Anonymous functions: `olhaEssaFita (x) { toma x * 2; }` |
 | Static methods | Class-level methods: `bagulho Math { bagulho add(a,b) { ... } }` |
 | Getter methods | Auto-invoked properties: `area { toma oCara.r * oCara.r; }` |
+| String interpolation | Embed expressions: `"E aí, {nome}!"` |
+| `viraTexto(x)` | Native toString function |
 | Unicode identifiers | Including emoji: `seLiga 🔥 = 42` |
 | `oiSumida` alias | Second print keyword for variety |
 | Unused variable warnings | Error on unused locals (use `_` prefix to suppress) |

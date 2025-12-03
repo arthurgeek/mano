@@ -39,6 +39,10 @@ pub struct Scanner<'a> {
     start: usize,
     current: usize,
     include_comments: bool,
+    /// Stack of brace depths for nested string interpolations.
+    /// Each entry represents an interpolated string we're inside.
+    /// The value is the brace nesting depth within that interpolation.
+    interpolation_stack: Vec<usize>,
 }
 
 impl<'a> Scanner<'a> {
@@ -48,6 +52,7 @@ impl<'a> Scanner<'a> {
             start: 0,
             current: 0,
             include_comments: false,
+            interpolation_stack: Vec::new(),
         }
     }
 
@@ -58,6 +63,7 @@ impl<'a> Scanner<'a> {
             start: 0,
             current: 0,
             include_comments: true,
+            interpolation_stack: Vec::new(),
         }
     }
 }
@@ -91,8 +97,26 @@ impl<'a> Iterator for Scanner<'a> {
                 // Single-character tokens
                 '(' => return Some(Ok(self.add_token(TokenType::LeftParen))),
                 ')' => return Some(Ok(self.add_token(TokenType::RightParen))),
-                '{' => return Some(Ok(self.add_token(TokenType::LeftBrace))),
-                '}' => return Some(Ok(self.add_token(TokenType::RightBrace))),
+                '{' => {
+                    // Track brace depth for interpolation
+                    if let Some(depth) = self.interpolation_stack.last_mut() {
+                        *depth += 1;
+                    }
+                    return Some(Ok(self.add_token(TokenType::LeftBrace)));
+                }
+                '}' => {
+                    // Check if this closes an interpolation
+                    if let Some(depth) = self.interpolation_stack.last_mut() {
+                        if *depth == 0 {
+                            // This closes the interpolation - continue scanning string
+                            self.interpolation_stack.pop();
+                            return Some(self.interpolated_string_continue());
+                        } else {
+                            *depth -= 1;
+                        }
+                    }
+                    return Some(Ok(self.add_token(TokenType::RightBrace)));
+                }
                 ',' => return Some(Ok(self.add_token(TokenType::Comma))),
                 '.' => return Some(Ok(self.add_token(TokenType::Dot))),
                 '-' => return Some(Ok(self.add_token(TokenType::Minus))),
@@ -258,24 +282,109 @@ impl<'a> Scanner<'a> {
     }
 
     fn string(&mut self) -> Result<Token, ManoError> {
-        // Consume characters until closing quote
-        while self.peek() != Some('"') && !self.is_at_end() {
-            self.advance();
+        let content_start = self.current; // Position after opening quote
+
+        loop {
+            match self.peek() {
+                None => {
+                    return Err(ManoError::Scan {
+                        message: "Fechou a string não, maluco!".to_string(),
+                        span: self.start..self.current,
+                    });
+                }
+                Some('"') => {
+                    // End of string - extract content and consume closing quote
+                    let value = self.source[content_start..self.current].to_string();
+                    self.advance();
+                    return Ok(
+                        self.add_token_with_literal(TokenType::String, Literal::String(value))
+                    );
+                }
+                Some('{') => {
+                    // Check for escape {{ -> literal {
+                    if self.peek_next() == Some('{') {
+                        self.advance(); // consume first {
+                        self.advance(); // consume second {
+                        continue;
+                    }
+                    // Start of interpolation - emit StringStart
+                    let value = self.source[content_start..self.current].to_string();
+                    self.advance(); // consume {
+                    self.interpolation_stack.push(0);
+                    return Ok(Token {
+                        token_type: TokenType::StringStart,
+                        lexeme: self.source[self.start..self.current].to_string(),
+                        literal: Some(Literal::String(value)),
+                        span: self.start..self.current,
+                    });
+                }
+                Some('\\') => {
+                    // Escape sequence - skip both chars
+                    self.advance();
+                    if !self.is_at_end() {
+                        self.advance();
+                    }
+                }
+                Some(_) => {
+                    self.advance();
+                }
+            }
         }
+    }
 
-        if self.is_at_end() {
-            return Err(ManoError::Scan {
-                message: "Cadê o fecha aspas?".to_string(),
-                span: self.start..self.current,
-            });
+    /// Continue scanning an interpolated string after a closing }
+    fn interpolated_string_continue(&mut self) -> Result<Token, ManoError> {
+        let content_start = self.current; // Position after the }
+        let token_start = self.start; // Points to the }
+
+        loop {
+            match self.peek() {
+                None => {
+                    return Err(ManoError::Scan {
+                        message: "Fechou a string não, maluco!".to_string(),
+                        span: token_start..self.current,
+                    });
+                }
+                Some('"') => {
+                    // End of interpolated string
+                    let value = self.source[content_start..self.current].to_string();
+                    self.advance();
+                    return Ok(Token {
+                        token_type: TokenType::StringEnd,
+                        lexeme: self.source[token_start..self.current].to_string(),
+                        literal: Some(Literal::String(value)),
+                        span: token_start..self.current,
+                    });
+                }
+                Some('{') => {
+                    // Check for escape {{ -> literal {
+                    if self.peek_next() == Some('{') {
+                        self.advance();
+                        self.advance();
+                        continue;
+                    }
+                    // Another interpolation - emit StringMiddle
+                    let value = self.source[content_start..self.current].to_string();
+                    self.advance(); // consume {
+                    self.interpolation_stack.push(0);
+                    return Ok(Token {
+                        token_type: TokenType::StringMiddle,
+                        lexeme: self.source[token_start..self.current].to_string(),
+                        literal: Some(Literal::String(value)),
+                        span: token_start..self.current,
+                    });
+                }
+                Some('\\') => {
+                    self.advance();
+                    if !self.is_at_end() {
+                        self.advance();
+                    }
+                }
+                Some(_) => {
+                    self.advance();
+                }
+            }
         }
-
-        // Consume the closing "
-        self.advance();
-
-        // Extract the string value (without quotes)
-        let value = self.source[self.start + 1..self.current - 1].to_string();
-        Ok(self.add_token_with_literal(TokenType::String, Literal::String(value)))
     }
 
     fn block_comment(&mut self) -> Result<(), ManoError> {
@@ -618,7 +727,7 @@ mod tests {
 
         assert!(result.is_err());
         if let ManoError::Scan { message, .. } = result.unwrap_err() {
-            assert!(message.contains("aspas"));
+            assert!(message.contains("string"));
         } else {
             panic!("Expected Scan error");
         }
@@ -632,7 +741,7 @@ mod tests {
 
         assert!(result.is_err());
         if let ManoError::Scan { message, .. } = result.unwrap_err() {
-            assert!(message.contains("aspas"));
+            assert!(message.contains("string"));
         } else {
             panic!("Expected Scan error");
         }
@@ -912,5 +1021,162 @@ mod tests {
 
         assert!(!is_identifier_char(' '));
         assert!(!is_identifier_char('+'));
+    }
+
+    // === String interpolation tests ===
+
+    #[test]
+    fn scans_interpolated_string_simple() {
+        let mut scanner = Scanner::new("\"Olá, {nome}!\"");
+        let tokens: Vec<_> = scanner.by_ref().flatten().collect();
+
+        assert_eq!(tokens[0].token_type, TokenType::StringStart);
+        assert_eq!(
+            tokens[0].literal,
+            Some(Literal::String("Olá, ".to_string()))
+        );
+
+        assert_eq!(tokens[1].token_type, TokenType::Identifier);
+        assert_eq!(tokens[1].lexeme, "nome");
+
+        assert_eq!(tokens[2].token_type, TokenType::StringEnd);
+        assert_eq!(tokens[2].literal, Some(Literal::String("!".to_string())));
+
+        assert_eq!(tokens[3].token_type, TokenType::Eof);
+    }
+
+    #[test]
+    fn scans_interpolated_string_multiple() {
+        let mut scanner = Scanner::new("\"Olá, {nome}! Você tem {idade} anos.\"");
+        let tokens: Vec<_> = scanner.by_ref().flatten().collect();
+
+        assert_eq!(tokens[0].token_type, TokenType::StringStart);
+        assert_eq!(
+            tokens[0].literal,
+            Some(Literal::String("Olá, ".to_string()))
+        );
+
+        assert_eq!(tokens[1].token_type, TokenType::Identifier);
+        assert_eq!(tokens[1].lexeme, "nome");
+
+        assert_eq!(tokens[2].token_type, TokenType::StringMiddle);
+        assert_eq!(
+            tokens[2].literal,
+            Some(Literal::String("! Você tem ".to_string()))
+        );
+
+        assert_eq!(tokens[3].token_type, TokenType::Identifier);
+        assert_eq!(tokens[3].lexeme, "idade");
+
+        assert_eq!(tokens[4].token_type, TokenType::StringEnd);
+        assert_eq!(
+            tokens[4].literal,
+            Some(Literal::String(" anos.".to_string()))
+        );
+    }
+
+    #[test]
+    fn scans_interpolated_string_with_expression() {
+        let mut scanner = Scanner::new("\"Dobro: {x * 2}\"");
+        let tokens: Vec<_> = scanner.by_ref().flatten().collect();
+
+        assert_eq!(tokens[0].token_type, TokenType::StringStart);
+        assert_eq!(tokens[1].token_type, TokenType::Identifier);
+        assert_eq!(tokens[1].lexeme, "x");
+        assert_eq!(tokens[2].token_type, TokenType::Star);
+        assert_eq!(tokens[3].token_type, TokenType::Number);
+        assert_eq!(tokens[4].token_type, TokenType::StringEnd);
+    }
+
+    #[test]
+    fn scans_plain_string_without_interpolation() {
+        let mut scanner = Scanner::new("\"Hello world\"");
+        let tokens: Vec<_> = scanner.by_ref().flatten().collect();
+
+        assert_eq!(tokens[0].token_type, TokenType::String);
+        assert_eq!(
+            tokens[0].literal,
+            Some(Literal::String("Hello world".to_string()))
+        );
+    }
+
+    #[test]
+    fn scans_escaped_brace_not_interpolation() {
+        let mut scanner = Scanner::new("\"Literal {{braces}}\"");
+        let tokens: Vec<_> = scanner.by_ref().flatten().collect();
+
+        // Should be a plain string, not interpolation
+        assert_eq!(tokens[0].token_type, TokenType::String);
+        assert!(
+            tokens[0]
+                .literal
+                .as_ref()
+                .unwrap()
+                .to_string()
+                .contains("{")
+        );
+    }
+
+    #[test]
+    fn scans_interpolation_with_nested_braces() {
+        // Code inside interpolation can have its own braces
+        let mut scanner = Scanner::new("\"Result: {foo({x})}\"");
+        let tokens: Vec<_> = scanner.by_ref().flatten().collect();
+
+        assert_eq!(tokens[0].token_type, TokenType::StringStart);
+        assert_eq!(tokens[1].token_type, TokenType::Identifier); // foo
+        assert_eq!(tokens[2].token_type, TokenType::LeftParen);
+        assert_eq!(tokens[3].token_type, TokenType::LeftBrace);
+        assert_eq!(tokens[4].token_type, TokenType::Identifier); // x
+        assert_eq!(tokens[5].token_type, TokenType::RightBrace);
+        assert_eq!(tokens[6].token_type, TokenType::RightParen);
+        assert_eq!(tokens[7].token_type, TokenType::StringEnd);
+    }
+
+    #[test]
+    fn scans_escape_in_interpolation_start() {
+        // Escape sequence in the first part of interpolated string
+        let mut scanner = Scanner::new("\"Hello\\n{x}\"");
+        let tokens: Vec<_> = scanner.by_ref().flatten().collect();
+
+        assert_eq!(tokens[0].token_type, TokenType::StringStart);
+        assert!(tokens[0].lexeme.contains("\\n"));
+        assert_eq!(tokens[1].token_type, TokenType::Identifier);
+        assert_eq!(tokens[2].token_type, TokenType::StringEnd);
+    }
+
+    #[test]
+    fn scans_escape_in_interpolation_continue() {
+        // Escape sequence after an interpolation
+        let mut scanner = Scanner::new("\"{x}\\nWorld\"");
+        let tokens: Vec<_> = scanner.by_ref().flatten().collect();
+
+        assert_eq!(tokens[0].token_type, TokenType::StringStart);
+        assert_eq!(tokens[1].token_type, TokenType::Identifier);
+        assert_eq!(tokens[2].token_type, TokenType::StringEnd);
+        assert!(tokens[2].lexeme.contains("\\n"));
+    }
+
+    #[test]
+    fn scans_escaped_brace_in_interpolation_continue() {
+        // {{ escape in the middle/end part of interpolated string
+        let mut scanner = Scanner::new("\"{x}{{literal}}\"");
+        let tokens: Vec<_> = scanner.by_ref().flatten().collect();
+
+        assert_eq!(tokens[0].token_type, TokenType::StringStart);
+        assert_eq!(tokens[1].token_type, TokenType::Identifier);
+        assert_eq!(tokens[2].token_type, TokenType::StringEnd);
+        // The {{ should remain as {{ (not converted, just not starting interpolation)
+        assert!(tokens[2].lexeme.contains("{"));
+    }
+
+    #[test]
+    fn unterminated_interpolated_string_returns_error() {
+        // String that starts interpolation but never closes
+        let scanner = Scanner::new("\"{x}");
+        let results: Vec<_> = scanner.collect();
+
+        // Should have StringStart, Identifier, then an error
+        assert!(results.iter().any(|r| r.is_err()));
     }
 }

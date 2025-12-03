@@ -5,7 +5,7 @@ use std::rc::Rc;
 use std::time::SystemTime;
 
 use crate::INITIALIZER_NAME;
-use crate::ast::{Expr, Stmt};
+use crate::ast::{Expr, InterpolationPart, Stmt};
 use crate::environment::Environment;
 use crate::error::ManoError;
 use crate::resolver::Resolutions;
@@ -37,6 +37,20 @@ impl Interpreter {
         environment.borrow_mut().define(
             "fazTeuCorre".to_string(),
             Value::Function(Rc::new(Function::Native(faz_teu_corre))),
+        );
+
+        // Register native function: viraTexto (toString)
+        let vira_texto = NativeFunction {
+            name: "viraTexto".to_string(),
+            arity: 1,
+            func: |args| {
+                let value = &args[0];
+                Ok(Value::Literal(Literal::String(format!("{}", value))))
+            },
+        };
+        environment.borrow_mut().define(
+            "viraTexto".to_string(),
+            Value::Function(Rc::new(Function::Native(vira_texto))),
         );
 
         Self {
@@ -658,6 +672,19 @@ impl Interpreter {
 
                 // Bind the method to "oCara"
                 Ok(Value::Function(Rc::new(method_func.bind(object))))
+            }
+            Expr::Interpolation { parts } => {
+                let mut result = String::new();
+                for part in parts {
+                    match part {
+                        InterpolationPart::Str(s) => result.push_str(s),
+                        InterpolationPart::Expr(expr) => {
+                            let value = self.interpret(expr, output)?;
+                            result.push_str(&format!("{}", value));
+                        }
+                    }
+                }
+                Ok(Value::Literal(Literal::String(result)))
             }
         }
     }
@@ -2323,6 +2350,68 @@ mod tests {
         };
         let result = eval(&mut interpreter, &call_expr);
         assert!(matches!(result, Err(ManoError::Runtime { .. })));
+    }
+
+    // === viraTexto native function ===
+
+    #[test]
+    fn vira_texto_converts_number_to_string() {
+        let mut interpreter = Interpreter::new();
+
+        // viraTexto(42)
+        let call_expr = Expr::Call {
+            callee: Box::new(Expr::Variable {
+                name: make_token(TokenType::Identifier, "viraTexto", 0),
+            }),
+            paren: make_token(TokenType::RightParen, ")", 0),
+            arguments: vec![Expr::Literal {
+                value: Literal::Number(42.0),
+            }],
+        };
+        let result = eval(&mut interpreter, &call_expr).unwrap();
+        assert_eq!(result, Value::Literal(Literal::String("42".to_string())));
+    }
+
+    #[test]
+    fn vira_texto_converts_bool_to_string() {
+        let mut interpreter = Interpreter::new();
+
+        // viraTexto(firmeza)
+        let call_expr = Expr::Call {
+            callee: Box::new(Expr::Variable {
+                name: make_token(TokenType::Identifier, "viraTexto", 0),
+            }),
+            paren: make_token(TokenType::RightParen, ")", 0),
+            arguments: vec![Expr::Literal {
+                value: Literal::Bool(true),
+            }],
+        };
+        let result = eval(&mut interpreter, &call_expr).unwrap();
+        assert_eq!(
+            result,
+            Value::Literal(Literal::String("firmeza".to_string()))
+        );
+    }
+
+    #[test]
+    fn vira_texto_converts_nil_to_string() {
+        let mut interpreter = Interpreter::new();
+
+        // viraTexto(nadaNão)
+        let call_expr = Expr::Call {
+            callee: Box::new(Expr::Variable {
+                name: make_token(TokenType::Identifier, "viraTexto", 0),
+            }),
+            paren: make_token(TokenType::RightParen, ")", 0),
+            arguments: vec![Expr::Literal {
+                value: Literal::Nil,
+            }],
+        };
+        let result = eval(&mut interpreter, &call_expr).unwrap();
+        assert_eq!(
+            result,
+            Value::Literal(Literal::String("nadaNão".to_string()))
+        );
     }
 
     // === return statements ===
@@ -4463,6 +4552,114 @@ mod tests {
         assert_eq!(
             result,
             Value::Literal(Literal::String("oi do pai".to_string()))
+        );
+    }
+
+    // === interpolation ===
+
+    #[test]
+    fn evaluates_interpolation_simple() {
+        use crate::ast::InterpolationPart;
+        let mut interpreter = Interpreter::new();
+        let mut output = Vec::new();
+
+        // "Hello, World!"
+        let expr = Expr::Interpolation {
+            parts: vec![
+                InterpolationPart::Str("Hello, ".to_string()),
+                InterpolationPart::Expr(Box::new(Expr::Literal {
+                    value: Literal::String("World".to_string()),
+                })),
+                InterpolationPart::Str("!".to_string()),
+            ],
+        };
+        let result = interpreter.interpret(&expr, &mut output).unwrap();
+        assert_eq!(
+            result,
+            Value::Literal(Literal::String("Hello, World!".to_string()))
+        );
+    }
+
+    #[test]
+    fn evaluates_interpolation_with_number() {
+        use crate::ast::InterpolationPart;
+        let mut interpreter = Interpreter::new();
+        let mut output = Vec::new();
+
+        // "Total: {42}"
+        let expr = Expr::Interpolation {
+            parts: vec![
+                InterpolationPart::Str("Total: ".to_string()),
+                InterpolationPart::Expr(Box::new(Expr::Literal {
+                    value: Literal::Number(42.0),
+                })),
+                InterpolationPart::Str("".to_string()),
+            ],
+        };
+        let result = interpreter.interpret(&expr, &mut output).unwrap();
+        assert_eq!(
+            result,
+            Value::Literal(Literal::String("Total: 42".to_string()))
+        );
+    }
+
+    #[test]
+    fn evaluates_interpolation_with_expression() {
+        use crate::ast::InterpolationPart;
+        let mut interpreter = Interpreter::new();
+        let mut output = Vec::new();
+
+        // "1 + 2 = {1 + 2}"
+        let expr = Expr::Interpolation {
+            parts: vec![
+                InterpolationPart::Str("1 + 2 = ".to_string()),
+                InterpolationPart::Expr(Box::new(Expr::Binary {
+                    left: Box::new(Expr::Literal {
+                        value: Literal::Number(1.0),
+                    }),
+                    operator: make_token(TokenType::Plus, "+", 0),
+                    right: Box::new(Expr::Literal {
+                        value: Literal::Number(2.0),
+                    }),
+                })),
+                InterpolationPart::Str("".to_string()),
+            ],
+        };
+        let result = interpreter.interpret(&expr, &mut output).unwrap();
+        assert_eq!(
+            result,
+            Value::Literal(Literal::String("1 + 2 = 3".to_string()))
+        );
+    }
+
+    #[test]
+    fn evaluates_interpolation_multiple() {
+        use crate::ast::InterpolationPart;
+        let mut interpreter = Interpreter::new();
+        let mut output = Vec::new();
+
+        // "{a} + {b} = {c}" where a=1, b=2, c=3
+        let expr = Expr::Interpolation {
+            parts: vec![
+                InterpolationPart::Str("".to_string()),
+                InterpolationPart::Expr(Box::new(Expr::Literal {
+                    value: Literal::Number(1.0),
+                })),
+                InterpolationPart::Str(" + ".to_string()),
+                InterpolationPart::Expr(Box::new(Expr::Literal {
+                    value: Literal::Number(2.0),
+                })),
+                InterpolationPart::Str(" = ".to_string()),
+                InterpolationPart::Expr(Box::new(Expr::Literal {
+                    value: Literal::Number(3.0),
+                })),
+                InterpolationPart::Str("".to_string()),
+            ],
+        };
+        let result = interpreter.interpret(&expr, &mut output).unwrap();
+        assert_eq!(
+            result,
+            Value::Literal(Literal::String("1 + 2 = 3".to_string()))
         );
     }
 }

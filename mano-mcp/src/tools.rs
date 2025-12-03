@@ -68,6 +68,32 @@ mano is a programming language where all keywords are mano slang.
 | this | `oCara` | `oCara.nome = "João";` |
 | super | `mestre` | `mestre.metodo();` |
 
+## Native Functions
+
+| Function | Description | Example |
+|----------|-------------|---------|
+| `fazTeuCorre()` | Returns current time in seconds | `seLiga tempo = fazTeuCorre();` |
+| `viraTexto(x)` | Converts any value to string | `seLiga s = viraTexto(42);` |
+
+## String Interpolation
+
+Strings support interpolation with `{expression}`:
+
+```mano
+seLiga nome = "mano";
+seLiga idade = 25;
+salve "E aí, {nome}! Tu tem {idade} anos.";
+// Output: E aí, mano! Tu tem 25 anos.
+
+// Works with any expression
+salve "1 + 2 = {1 + 2}";
+// Output: 1 + 2 = 3
+
+// Escape with {{ for literal braces
+salve "Chaves: {{assim}}";
+// Output: Chaves: {assim}
+```
+
 ## Classes and Inheritance
 
 ```mano

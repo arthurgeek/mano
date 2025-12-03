@@ -1,0 +1,47 @@
+// Interpolação de strings em mano! 🔥
+
+seLiga nome = "mano";
+seLiga idade = 25;
+
+// Interpolação básica
+salve "E aí, {nome}! Tu tem {idade} anos.";
+
+// Expressões dentro da interpolação
+salve "Daqui a 10 anos tu vai ter {idade + 10} anos!";
+
+// Múltiplas interpolações
+seLiga a = 7;
+seLiga b = 3;
+salve "{a} + {b} = {a + b}";
+salve "{a} * {b} = {a * b}";
+
+// Escape com {{ para chaves literais (fica como {{ na saída)
+salve "Chaves: {{duplas}}";
+
+// Usando viraTexto para conversão explícita
+seLiga numero = 42;
+seLiga texto = viraTexto(numero);
+salve "O número {numero} virou texto: {texto}";
+
+// Interpolação com booleanos
+seLiga animado = firmeza;
+salve "Tá animado? {animado}";
+
+// Interpolação com nil
+seLiga nada = nadaNão;
+salve "Valor nulo: {nada}";
+
+// Exemplo prático: formatação de saída
+bagulho Pessoa {
+    bora(nome, idade) {
+        oCara.nome = nome;
+        oCara.idade = idade;
+    }
+
+    apresentar() {
+        salve "Fala, {oCara.nome}! {oCara.idade} anos de corre!";
+    }
+}
+
+seLiga p = Pessoa("Zé", 30);
+p.apresentar();

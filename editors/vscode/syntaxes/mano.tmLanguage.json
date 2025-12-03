@@ -86,6 +86,28 @@
         {
           "name": "constant.character.escape.mano",
           "match": "\\\\."
+        },
+        {
+          "name": "constant.character.escape.mano",
+          "match": "\\{\\{"
+        },
+        {
+          "name": "meta.embedded.expression.mano",
+          "begin": "\\{",
+          "end": "\\}",
+          "beginCaptures": {
+            "0": { "name": "punctuation.section.embedded.begin.mano" }
+          },
+          "endCaptures": {
+            "0": { "name": "punctuation.section.embedded.end.mano" }
+          },
+          "patterns": [
+            { "include": "#comments" },
+            { "include": "#function-call" },
+            { "include": "#keywords" },
+            { "include": "#strings" },
+            { "include": "#numbers" }
+          ]
         }
       ]
     },

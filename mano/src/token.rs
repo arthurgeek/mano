@@ -28,6 +28,9 @@ pub enum TokenType {
 
     // Literals
     String,
+    StringStart,  // First part of interpolated string (before first {)
+    StringMiddle, // Middle part of interpolated string (between } and {)
+    StringEnd,    // Last part of interpolated string (after last })
     Number,
     Identifier,
 
