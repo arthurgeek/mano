@@ -4,9 +4,10 @@ mod state;
 
 use std::fs;
 use std::io::{self, IsTerminal, Read};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
+use clap::Parser;
 use mano::{Mano, ManoError};
 use rustyline::Editor;
 use rustyline::error::ReadlineError;
@@ -15,36 +16,55 @@ use completer::ManoHelper;
 use report::report_error;
 use state::ReplState;
 
+#[derive(Parser)]
+#[command(name = "mano")]
+#[command(about = "Interpretador da linguagem mano - a linguagem dos cria", long_about = None)]
+struct Args {
+    /// Script file to execute
+    script: Option<PathBuf>,
+
+    /// Use the bytecode VM instead of the tree-walk interpreter
+    #[arg(long)]
+    vm: bool,
+}
+
 fn main() -> ExitCode {
-    let args: Vec<String> = std::env::args().skip(1).collect();
+    let args = Args::parse();
 
-    let mut mano = Mano::new();
-
-    let result = match args.len() {
-        0 => {
-            // Check if stdin is a terminal (interactive) or a pipe
-            if io::stdin().is_terminal() {
-                run_repl(&mut mano)
-            } else {
-                run_stdin(&mut mano)
-            }
-        }
-        1 => run_file(&mut mano, Path::new(&args[0])),
-        _ => {
-            eprintln!("Uso: mano [script]");
-            return ExitCode::from(64);
-        }
+    let result = if args.vm {
+        run_vm_mode(args.script.as_deref())
+    } else {
+        run_interpreter_mode(args.script.as_deref())
     };
 
     match result {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
-            // Only print error if it has a message (not already reported)
             let msg = e.to_string();
             if !msg.is_empty() {
                 eprintln!("{e}");
             }
             ExitCode::from(65)
+        }
+    }
+}
+
+fn run_vm_mode(_script: Option<&std::path::Path>) -> Result<(), ManoError> {
+    print!("{}", mano_vm::run());
+    Ok(())
+}
+
+fn run_interpreter_mode(script: Option<&std::path::Path>) -> Result<(), ManoError> {
+    let mut mano = Mano::new();
+
+    match script {
+        Some(path) => run_file(&mut mano, path),
+        None => {
+            if io::stdin().is_terminal() {
+                run_repl(&mut mano)
+            } else {
+                run_stdin(&mut mano)
+            }
         }
     }
 }

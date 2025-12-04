@@ -153,6 +153,24 @@ cargo build --release -p mano-lsp
 ln -s $(pwd)/editors/vscode ~/.vscode/extensions/mano.mano-lang-0.1.0
 ```
 
+## Bytecode VM (mano-vm)
+
+Following Part III of Crafting Interpreters, we're building a bytecode VM alongside the tree-walking interpreter. The `--vm` flag runs the VM path (currently outputs disassembly only).
+
+```bash
+cargo run -p mano-cli -- --vm
+```
+
+### Differences from clox
+
+| clox | mano-vm | Why |
+|------|---------|-----|
+| Line numbers (`int` array) | Byte spans (`Range<usize>`) | Ariadne needs spans for precise error highlighting |
+| One line per instruction | RLE-compressed spans | Same span often repeats; `Vec<(Span, count)>` saves memory |
+| `OP_CONSTANT` only (1-byte index) | `OP_CONSTANT` + `OP_CONSTANT_LONG` | Challenge 2: 24-bit index supports >256 constants |
+| Manual `count`/`capacity` | `Vec<T>` | Rust handles dynamic arrays idiomatically |
+| `reallocate()` wrapper | Direct `Vec` methods | No manual memory management needed |
+
 ## Differences from Lox
 
 mano implements several [Crafting Interpreters challenges](https://craftinginterpreters.com/contents.html) and extensions:

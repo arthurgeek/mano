@@ -16,6 +16,8 @@ tempfile = "3.23.0"
 
 [dependencies]
 ariadne = "0.6"
+clap = { version = "4", features = ["derive"] }
 mano = { path = "../mano" }
+mano-vm = { path = "../mano-vm" }
 rustyline = "17.0.2"
 rustyline-derive = "0.11.1"

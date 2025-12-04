@@ -30,8 +30,8 @@ fn prints_usage_with_too_many_args() {
     mano()
         .args(["file1.mano", "file2.mano"])
         .assert()
-        .code(64)
-        .stderr(predicates::str::contains("Uso: mano"));
+        .code(2)
+        .stderr(predicates::str::contains("Usage: mano"));
 }
 
 #[test]
@@ -201,4 +201,25 @@ fn io_errors_are_still_printed() {
     let stderr = String::from_utf8_lossy(&output.stderr);
     // Should contain IO error message about missing file
     assert!(stderr.contains("Cadê o arquivo") || stderr.contains("No such file"));
+}
+
+#[test]
+fn vm_flag_prints_disassembly() {
+    mano()
+        .arg("--vm")
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("== test chunk =="))
+        .stdout(predicates::str::contains("OP_CONSTANT"))
+        .stdout(predicates::str::contains("1.2"))
+        .stdout(predicates::str::contains("OP_RETURN"));
+}
+
+#[test]
+fn help_flag_shows_usage() {
+    mano()
+        .arg("--help")
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("--vm"));
 }
