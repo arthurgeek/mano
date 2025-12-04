@@ -8,6 +8,18 @@ pub enum OpCode {
     Constant = 1,
     /// Load a constant from the constant pool (24-bit index).
     ConstantLong = 2,
+    /// Negate the top value on the stack.
+    Negate = 3,
+    /// Add top two values on the stack.
+    Add = 4,
+    /// Subtract top two values on the stack.
+    Subtract = 5,
+    /// Multiply top two values on the stack.
+    Multiply = 6,
+    /// Divide top two values on the stack.
+    Divide = 7,
+    /// Modulo top two values on the stack.
+    Modulo = 8,
 }
 
 impl From<u8> for OpCode {
@@ -16,6 +28,12 @@ impl From<u8> for OpCode {
             0 => OpCode::Return,
             1 => OpCode::Constant,
             2 => OpCode::ConstantLong,
+            3 => OpCode::Negate,
+            4 => OpCode::Add,
+            5 => OpCode::Subtract,
+            6 => OpCode::Multiply,
+            7 => OpCode::Divide,
+            8 => OpCode::Modulo,
             _ => panic!("Unknown opcode: {}", byte),
         }
     }
@@ -70,5 +88,65 @@ mod tests {
     #[test]
     fn opcode_from_byte_two_is_constant_long() {
         assert_eq!(OpCode::from(2), OpCode::ConstantLong);
+    }
+
+    #[test]
+    fn opcode_negate_has_value_three() {
+        assert_eq!(OpCode::Negate as u8, 3);
+    }
+
+    #[test]
+    fn opcode_from_byte_three_is_negate() {
+        assert_eq!(OpCode::from(3), OpCode::Negate);
+    }
+
+    #[test]
+    fn opcode_add_has_value_four() {
+        assert_eq!(OpCode::Add as u8, 4);
+    }
+
+    #[test]
+    fn opcode_subtract_has_value_five() {
+        assert_eq!(OpCode::Subtract as u8, 5);
+    }
+
+    #[test]
+    fn opcode_multiply_has_value_six() {
+        assert_eq!(OpCode::Multiply as u8, 6);
+    }
+
+    #[test]
+    fn opcode_divide_has_value_seven() {
+        assert_eq!(OpCode::Divide as u8, 7);
+    }
+
+    #[test]
+    fn opcode_modulo_has_value_eight() {
+        assert_eq!(OpCode::Modulo as u8, 8);
+    }
+
+    #[test]
+    fn opcode_from_byte_four_is_add() {
+        assert_eq!(OpCode::from(4), OpCode::Add);
+    }
+
+    #[test]
+    fn opcode_from_byte_five_is_subtract() {
+        assert_eq!(OpCode::from(5), OpCode::Subtract);
+    }
+
+    #[test]
+    fn opcode_from_byte_six_is_multiply() {
+        assert_eq!(OpCode::from(6), OpCode::Multiply);
+    }
+
+    #[test]
+    fn opcode_from_byte_seven_is_divide() {
+        assert_eq!(OpCode::from(7), OpCode::Divide);
+    }
+
+    #[test]
+    fn opcode_from_byte_eight_is_modulo() {
+        assert_eq!(OpCode::from(8), OpCode::Modulo);
     }
 }

@@ -204,14 +204,23 @@ fn io_errors_are_still_printed() {
 }
 
 #[test]
-fn vm_flag_prints_disassembly() {
+fn vm_flag_runs_bytecode() {
     mano()
         .arg("--vm")
         .assert()
         .success()
-        .stdout(predicates::str::contains("== test chunk =="))
+        .stdout(predicates::str::contains("-2.3"));
+}
+
+#[test]
+fn vm_debug_flag_traces_execution() {
+    mano()
+        .arg("--vm")
+        .arg("--debug")
+        .assert()
+        .success()
         .stdout(predicates::str::contains("OP_CONSTANT"))
-        .stdout(predicates::str::contains("1.2"))
+        .stdout(predicates::str::contains("OP_NEGATE"))
         .stdout(predicates::str::contains("OP_RETURN"));
 }
 

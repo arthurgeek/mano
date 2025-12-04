@@ -25,6 +25,27 @@ pub fn disassemble_instruction(chunk: &Chunk, offset: usize) -> (String, usize) 
             format!("{:04} {} OP_RETURN\n", offset, span_str),
             offset + 1,
         ),
+        b if b == OpCode::Negate as u8 => (
+            format!("{:04} {} OP_NEGATE\n", offset, span_str),
+            offset + 1,
+        ),
+        b if b == OpCode::Add as u8 => (format!("{:04} {} OP_ADD\n", offset, span_str), offset + 1),
+        b if b == OpCode::Subtract as u8 => (
+            format!("{:04} {} OP_SUBTRACT\n", offset, span_str),
+            offset + 1,
+        ),
+        b if b == OpCode::Multiply as u8 => (
+            format!("{:04} {} OP_MULTIPLY\n", offset, span_str),
+            offset + 1,
+        ),
+        b if b == OpCode::Divide as u8 => (
+            format!("{:04} {} OP_DIVIDE\n", offset, span_str),
+            offset + 1,
+        ),
+        b if b == OpCode::Modulo as u8 => (
+            format!("{:04} {} OP_MODULO\n", offset, span_str),
+            offset + 1,
+        ),
         b if b == OpCode::Constant as u8 => {
             let constant_idx = chunk.code[offset + 1];
             let value = chunk.constants[constant_idx as usize];
@@ -159,5 +180,71 @@ mod tests {
 
         assert_eq!(output, "0000 0..0 OP_CONSTANT_LONG       256 '999'\n");
         assert_eq!(next_offset, 4); // opcode + 3 bytes
+    }
+
+    #[test]
+    fn disassemble_instruction_negate() {
+        let mut chunk = Chunk::new();
+        chunk.write(OpCode::Negate.into(), 0..0);
+
+        let (output, next_offset) = disassemble_instruction(&chunk, 0);
+
+        assert_eq!(output, "0000 0..0 OP_NEGATE\n");
+        assert_eq!(next_offset, 1);
+    }
+
+    #[test]
+    fn disassemble_instruction_add() {
+        let mut chunk = Chunk::new();
+        chunk.write(OpCode::Add.into(), 0..0);
+
+        let (output, next_offset) = disassemble_instruction(&chunk, 0);
+
+        assert_eq!(output, "0000 0..0 OP_ADD\n");
+        assert_eq!(next_offset, 1);
+    }
+
+    #[test]
+    fn disassemble_instruction_subtract() {
+        let mut chunk = Chunk::new();
+        chunk.write(OpCode::Subtract.into(), 0..0);
+
+        let (output, next_offset) = disassemble_instruction(&chunk, 0);
+
+        assert_eq!(output, "0000 0..0 OP_SUBTRACT\n");
+        assert_eq!(next_offset, 1);
+    }
+
+    #[test]
+    fn disassemble_instruction_multiply() {
+        let mut chunk = Chunk::new();
+        chunk.write(OpCode::Multiply.into(), 0..0);
+
+        let (output, next_offset) = disassemble_instruction(&chunk, 0);
+
+        assert_eq!(output, "0000 0..0 OP_MULTIPLY\n");
+        assert_eq!(next_offset, 1);
+    }
+
+    #[test]
+    fn disassemble_instruction_divide() {
+        let mut chunk = Chunk::new();
+        chunk.write(OpCode::Divide.into(), 0..0);
+
+        let (output, next_offset) = disassemble_instruction(&chunk, 0);
+
+        assert_eq!(output, "0000 0..0 OP_DIVIDE\n");
+        assert_eq!(next_offset, 1);
+    }
+
+    #[test]
+    fn disassemble_instruction_modulo() {
+        let mut chunk = Chunk::new();
+        chunk.write(OpCode::Modulo.into(), 0..0);
+
+        let (output, next_offset) = disassemble_instruction(&chunk, 0);
+
+        assert_eq!(output, "0000 0..0 OP_MODULO\n");
+        assert_eq!(next_offset, 1);
     }
 }

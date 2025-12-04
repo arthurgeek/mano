@@ -26,13 +26,17 @@ struct Args {
     /// Use the bytecode VM instead of the tree-walk interpreter
     #[arg(long)]
     vm: bool,
+
+    /// Enable debug tracing (VM mode only)
+    #[arg(long)]
+    debug: bool,
 }
 
 fn main() -> ExitCode {
     let args = Args::parse();
 
     let result = if args.vm {
-        run_vm_mode(args.script.as_deref())
+        run_vm_mode(args.script.as_deref(), args.debug)
     } else {
         run_interpreter_mode(args.script.as_deref())
     };
@@ -49,8 +53,8 @@ fn main() -> ExitCode {
     }
 }
 
-fn run_vm_mode(_script: Option<&std::path::Path>) -> Result<(), ManoError> {
-    print!("{}", mano_vm::run());
+fn run_vm_mode(_script: Option<&std::path::Path>, debug: bool) -> Result<(), ManoError> {
+    print!("{}", mano_vm::run(debug));
     Ok(())
 }
 
