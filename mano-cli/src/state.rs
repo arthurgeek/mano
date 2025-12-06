@@ -99,7 +99,7 @@ impl ReplState {
 
         // Don't auto-print if it starts with a keyword (incomplete statement)
         // Let the parser give proper error message
-        for (keyword, _) in KEYWORDS {
+        for (keyword, _) in KEYWORDS.entries() {
             if let Some(after_keyword) = code.strip_prefix(keyword) {
                 // Make sure it's followed by a space or end of string (not just a prefix match)
                 if after_keyword.is_empty() || after_keyword.starts_with(' ') {

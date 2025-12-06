@@ -1,32 +1,34 @@
 //! mano-vm: Bytecode virtual machine for the mano programming language
 
 mod chunk;
+mod compiler;
 mod debug;
 mod opcode;
 mod value;
 mod vm;
 
+use std::io::Write;
+
+use mano::ManoError;
+
 pub use chunk::Chunk;
+pub use compiler::compile;
 pub use debug::{disassemble_chunk, disassemble_instruction};
 pub use opcode::OpCode;
+pub use vm::{InterpretResult, VM};
 
-pub fn run(debug: bool) -> String {
-    let mut chunk = Chunk::new();
-
-    // Compute: -((1.2 + 3.4) / 2)
-    chunk.write_constant(1.2, 0..0);
-    chunk.write_constant(3.4, 0..0);
-    chunk.write(OpCode::Add.into(), 0..0);
-    chunk.write_constant(2.0, 0..0);
-    chunk.write(OpCode::Divide.into(), 0..0);
-    chunk.write(OpCode::Negate.into(), 0..0);
-    chunk.write(OpCode::Return.into(), 0..0);
-
-    let mut output = Vec::new();
-    let mut vm = vm::VM::new(&chunk, &mut output);
-    vm.set_trace(debug);
-    vm.interpret();
-    String::from_utf8(output).unwrap()
+/// Run mano source code.
+///
+/// Compiles the source to bytecode and executes it in the VM.
+/// When trace is enabled, dumps the compiled chunk before execution.
+pub fn run<W: Write>(source: &str, output: &mut W, trace: bool) -> Result<(), Vec<ManoError>> {
+    let chunk = compile(source)?;
+    if trace {
+        write!(output, "{}", disassemble_chunk(&chunk, "code")).unwrap();
+    }
+    let mut vm = VM::new(&chunk, output);
+    vm.set_trace(trace);
+    vm.interpret()
 }
 
 #[cfg(test)]
@@ -34,18 +36,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn run_returns_result() {
-        let output = run(false);
-        assert_eq!(output, "-2.3\n");
-    }
-
-    #[test]
-    fn run_with_debug_traces_execution() {
-        let output = run(true);
-        assert!(output.contains("OP_CONSTANT"));
-        assert!(output.contains("OP_ADD"));
-        assert!(output.contains("OP_DIVIDE"));
-        assert!(output.contains("OP_NEGATE"));
-        assert!(output.contains("OP_RETURN"));
+    fn run_with_trace_dumps_chunk() {
+        let mut output = Vec::new();
+        run("42", &mut output, true).unwrap();
+        let output_str = String::from_utf8(output).unwrap();
+        assert!(output_str.contains("== code =="));
+        assert!(output_str.contains("OP_CONSTANT"));
     }
 }

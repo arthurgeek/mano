@@ -477,7 +477,7 @@ fn get_completions(source: &str, prefix: &str) -> Vec<CompletionItem> {
     let mut completions = Vec::new();
 
     // Add keywords
-    for (keyword, _) in KEYWORDS {
+    for (keyword, _) in KEYWORDS.entries() {
         if keyword.starts_with(prefix) {
             completions.push(CompletionItem {
                 label: keyword.to_string(),
@@ -961,10 +961,8 @@ fn get_hover(source: &str, position: Position) -> Option<String> {
     let word = get_word_at_position(source, position)?;
 
     // Check if it's a keyword
-    for (keyword, _token_type) in KEYWORDS {
-        if *keyword == word {
-            return Some(format!("`{}` (keyword)", keyword));
-        }
+    if KEYWORDS.contains_key(&word) {
+        return Some(format!("`{}` (keyword)", word));
     }
 
     // Check if it's a function (with parameters)

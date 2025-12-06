@@ -2,13 +2,9 @@ use std::io::Write;
 
 use crate::{Chunk, OpCode, disassemble_instruction};
 
-pub enum InterpretResult {
-    Ok,
-    #[allow(dead_code)]
-    CompileError,
-    #[allow(dead_code)]
-    RuntimeError,
-}
+use mano::ManoError;
+
+pub type InterpretResult = Result<(), Vec<ManoError>>;
 
 pub struct VM<'a, W: Write> {
     chunk: &'a Chunk,
@@ -50,6 +46,9 @@ impl<'a, W: Write> VM<'a, W> {
     }
 
     pub fn interpret(&mut self) -> InterpretResult {
+        if self.trace {
+            writeln!(self.output, "== trace ==").unwrap();
+        }
         self.run()
     }
 
@@ -102,9 +101,9 @@ impl<'a, W: Write> VM<'a, W> {
                 b if b == OpCode::Return as u8 => {
                     let value = self.pop();
                     writeln!(self.output, "{value}").unwrap();
-                    return InterpretResult::Ok;
+                    return Ok(());
                 }
-                _ => {}
+                _ => unreachable!("Unknown opcode: {}", byte),
             }
         }
     }
@@ -148,7 +147,7 @@ mod tests {
         chunk.write(crate::OpCode::Return.into(), 0..0);
         let mut output = Vec::new();
         let mut vm = VM::new(&chunk, &mut output);
-        assert!(matches!(vm.interpret(), InterpretResult::Ok));
+        assert!(vm.interpret().is_ok());
     }
 
     #[test]
@@ -158,7 +157,7 @@ mod tests {
         chunk.write(crate::OpCode::Return.into(), 0..0);
         let mut output = Vec::new();
         let mut vm = VM::new(&chunk, &mut output);
-        assert!(matches!(vm.interpret(), InterpretResult::Ok));
+        assert!(vm.interpret().is_ok());
         assert_eq!(String::from_utf8(output).unwrap(), "1.2\n");
     }
 
@@ -173,7 +172,7 @@ mod tests {
         chunk.write(crate::OpCode::Return.into(), 0..0);
         let mut output = Vec::new();
         let mut vm = VM::new(&chunk, &mut output);
-        assert!(matches!(vm.interpret(), InterpretResult::Ok));
+        assert!(vm.interpret().is_ok());
         assert_eq!(String::from_utf8(output).unwrap(), "999\n");
     }
 
@@ -185,10 +184,23 @@ mod tests {
         let mut output = Vec::new();
         let mut vm = VM::new(&chunk, &mut output);
         vm.set_trace(true);
-        vm.interpret();
+        let _ = vm.interpret();
         let out = String::from_utf8(output).unwrap();
         assert!(out.contains("OP_CONSTANT"));
         assert!(out.contains("OP_RETURN"));
+    }
+
+    #[test]
+    fn vm_trace_prints_header() {
+        let mut chunk = Chunk::new();
+        chunk.write_constant(1.2, 0..0);
+        chunk.write(crate::OpCode::Return.into(), 0..0);
+        let mut output = Vec::new();
+        let mut vm = VM::new(&chunk, &mut output);
+        vm.set_trace(true);
+        let _ = vm.interpret();
+        let out = String::from_utf8(output).unwrap();
+        assert!(out.starts_with("== trace ==\n"));
     }
 
     #[test]
@@ -234,7 +246,7 @@ mod tests {
         chunk.write(crate::OpCode::Return.into(), 0..0);
         let mut output = Vec::new();
         let mut vm = VM::new(&chunk, &mut output);
-        vm.interpret();
+        let _ = vm.interpret();
         // Return popped 3.4, 1.2 remains
         assert_eq!(vm.stack, vec![1.2]);
     }
@@ -250,7 +262,7 @@ mod tests {
         chunk.write(crate::OpCode::Return.into(), 0..0);
         let mut output = Vec::new();
         let mut vm = VM::new(&chunk, &mut output);
-        vm.interpret();
+        let _ = vm.interpret();
         // Return popped 999.0, 888.0 remains
         assert_eq!(vm.stack, vec![888.0]);
     }
@@ -263,7 +275,7 @@ mod tests {
         let mut output = Vec::new();
         let mut vm = VM::new(&chunk, &mut output);
         vm.set_trace(true);
-        vm.interpret();
+        let _ = vm.interpret();
         let out = String::from_utf8(output).unwrap();
         // First instruction: empty stack, then OP_CONSTANT
         // Second instruction: stack has 1.2, then OP_RETURN
@@ -279,7 +291,7 @@ mod tests {
         chunk.write(crate::OpCode::Return.into(), 0..0);
         let mut output = Vec::new();
         let mut vm = VM::new(&chunk, &mut output);
-        vm.interpret();
+        let _ = vm.interpret();
         assert_eq!(String::from_utf8(output).unwrap(), "-3.4\n");
     }
 
@@ -292,7 +304,7 @@ mod tests {
         chunk.write(crate::OpCode::Return.into(), 0..0);
         let mut output = Vec::new();
         let mut vm = VM::new(&chunk, &mut output);
-        vm.interpret();
+        let _ = vm.interpret();
         assert_eq!(String::from_utf8(output).unwrap(), "4.6\n");
     }
 
@@ -305,7 +317,7 @@ mod tests {
         chunk.write(crate::OpCode::Return.into(), 0..0);
         let mut output = Vec::new();
         let mut vm = VM::new(&chunk, &mut output);
-        vm.interpret();
+        let _ = vm.interpret();
         assert_eq!(String::from_utf8(output).unwrap(), "2\n");
     }
 
@@ -318,7 +330,7 @@ mod tests {
         chunk.write(crate::OpCode::Return.into(), 0..0);
         let mut output = Vec::new();
         let mut vm = VM::new(&chunk, &mut output);
-        vm.interpret();
+        let _ = vm.interpret();
         assert_eq!(String::from_utf8(output).unwrap(), "12\n");
     }
 
@@ -331,7 +343,7 @@ mod tests {
         chunk.write(crate::OpCode::Return.into(), 0..0);
         let mut output = Vec::new();
         let mut vm = VM::new(&chunk, &mut output);
-        vm.interpret();
+        let _ = vm.interpret();
         assert_eq!(String::from_utf8(output).unwrap(), "2.5\n");
     }
 
@@ -344,7 +356,7 @@ mod tests {
         chunk.write(crate::OpCode::Return.into(), 0..0);
         let mut output = Vec::new();
         let mut vm = VM::new(&chunk, &mut output);
-        vm.interpret();
+        let _ = vm.interpret();
         assert_eq!(String::from_utf8(output).unwrap(), "1\n");
     }
 }

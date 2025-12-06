@@ -7,5 +7,6 @@ edition = "2024"
 tempfile = "3.23.0"
 
 [dependencies]
+phf = { version = "0.13.1", features = ["macros"] }
 thiserror = "2.0.17"
 unicode-properties = "0.1.4"

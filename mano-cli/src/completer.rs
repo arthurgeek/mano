@@ -43,7 +43,7 @@ impl ManoHelper {
         let mut completions = Vec::new();
 
         // Add matching keywords
-        for (keyword, _) in mano::KEYWORDS {
+        for (keyword, _) in mano::KEYWORDS.entries() {
             if keyword.starts_with(prefix) {
                 completions.push((*keyword).to_string());
             }

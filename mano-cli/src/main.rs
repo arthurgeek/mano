@@ -1,6 +1,7 @@
 mod completer;
 mod report;
 mod state;
+mod vm;
 
 use std::fs;
 use std::io::{self, IsTerminal, Read};
@@ -8,13 +9,14 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use clap::Parser;
-use mano::{Mano, ManoError};
+use mano::{Mano, ManoError, Runner};
 use rustyline::Editor;
 use rustyline::error::ReadlineError;
 
 use completer::ManoHelper;
 use report::report_error;
 use state::ReplState;
+use vm::Vm;
 
 #[derive(Parser)]
 #[command(name = "mano")]
@@ -36,9 +38,12 @@ fn main() -> ExitCode {
     let args = Args::parse();
 
     let result = if args.vm {
-        run_vm_mode(args.script.as_deref(), args.debug)
+        let mut vm = Vm::new();
+        vm.set_debug(args.debug);
+        run_mode(&mut vm, args.script.as_deref())
     } else {
-        run_interpreter_mode(args.script.as_deref())
+        let mut mano = Mano::new();
+        run_mode(&mut mano, args.script.as_deref())
     };
 
     match result {
@@ -53,55 +58,48 @@ fn main() -> ExitCode {
     }
 }
 
-fn run_vm_mode(_script: Option<&std::path::Path>, debug: bool) -> Result<(), ManoError> {
-    print!("{}", mano_vm::run(debug));
-    Ok(())
-}
-
-fn run_interpreter_mode(script: Option<&std::path::Path>) -> Result<(), ManoError> {
-    let mut mano = Mano::new();
-
+fn run_mode<R: Runner>(runner: &mut R, script: Option<&Path>) -> Result<(), ManoError> {
     match script {
-        Some(path) => run_file(&mut mano, path),
+        Some(path) => run_file(runner, path),
         None => {
             if io::stdin().is_terminal() {
-                run_repl(&mut mano)
+                run_repl(runner)
             } else {
-                run_stdin(&mut mano)
+                run_stdin(runner)
             }
         }
     }
 }
 
-fn run_file(mano: &mut Mano, path: &Path) -> Result<(), ManoError> {
+fn run_file<R: Runner>(runner: &mut R, path: &Path) -> Result<(), ManoError> {
     let source = fs::read_to_string(path)?; // IO errors propagate (will be printed)
     let filename = path.to_string_lossy();
-    let errors = mano.run(&source, std::io::stdout());
-    for error in &errors {
-        report_error(error, &source, Some(&filename), std::io::stderr());
+    match runner.run(&source, std::io::stdout()) {
+        Ok(()) => Ok(()),
+        Err(errors) => {
+            for error in &errors {
+                report_error(error, &source, Some(&filename), std::io::stderr());
+            }
+            Err(ManoError::ScriptFailed)
+        }
     }
-    if !errors.is_empty() {
-        // Script errors already reported, just signal failure
-        return Err(ManoError::ScriptFailed);
-    }
-    Ok(())
 }
 
-fn run_stdin(mano: &mut Mano) -> Result<(), ManoError> {
+fn run_stdin<R: Runner>(runner: &mut R) -> Result<(), ManoError> {
     let mut source = String::new();
     io::stdin().read_to_string(&mut source)?; // IO errors propagate (will be printed)
-    let errors = mano.run(&source, std::io::stdout());
-    for error in &errors {
-        report_error(error, &source, None, std::io::stderr());
+    match runner.run(&source, std::io::stdout()) {
+        Ok(()) => Ok(()),
+        Err(errors) => {
+            for error in &errors {
+                report_error(error, &source, None, std::io::stderr());
+            }
+            Err(ManoError::ScriptFailed)
+        }
     }
-    if !errors.is_empty() {
-        // Script errors already reported, just signal failure
-        return Err(ManoError::ScriptFailed);
-    }
-    Ok(())
 }
 
-fn run_repl(mano: &mut Mano) -> Result<(), ManoError> {
+fn run_repl<R: Runner>(runner: &mut R) -> Result<(), ManoError> {
     let helper = ManoHelper::new();
     let mut rl: Editor<ManoHelper, _> =
         Editor::with_config(rustyline::Config::default()).expect("Falha ao iniciar o REPL, bicho!");
@@ -115,19 +113,21 @@ fn run_repl(mano: &mut Mano) -> Result<(), ManoError> {
 
                 if state.process_line(&line) {
                     let buffer = state.take_buffer();
-                    let source = if ReplState::should_auto_print(&buffer) {
-                        ReplState::wrap_for_print(&buffer)
-                    } else {
-                        buffer
-                    };
-                    let errors = mano.run(&source, std::io::stdout());
-                    for error in &errors {
-                        report_error(error, &source, None, std::io::stderr());
+                    let source =
+                        if runner.supports_auto_print() && ReplState::should_auto_print(&buffer) {
+                            ReplState::wrap_for_print(&buffer)
+                        } else {
+                            buffer
+                        };
+                    if let Err(errors) = runner.run(&source, std::io::stdout()) {
+                        for error in &errors {
+                            report_error(error, &source, None, std::io::stderr());
+                        }
                     }
 
                     // Update completions with current variables
                     if let Some(helper) = rl.helper() {
-                        helper.set_variables(mano.variable_names());
+                        helper.set_variables(runner.variable_names());
                     }
                 }
             }

@@ -6,7 +6,7 @@ use crate::value::Value;
 pub type Span = Range<usize>;
 
 /// A chunk of bytecode.
-#[derive(Default)]
+#[derive(Default, Debug)]
 pub struct Chunk {
     pub(crate) code: Vec<u8>,
     pub(crate) constants: Vec<Value>,

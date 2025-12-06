@@ -206,22 +206,46 @@ fn io_errors_are_still_printed() {
 #[test]
 fn vm_flag_runs_bytecode() {
     mano()
-        .arg("--vm")
+        .args(["--vm"])
+        .write_stdin("1 + 2 * 3\n")
         .assert()
         .success()
-        .stdout(predicates::str::contains("-2.3"));
+        .stdout(predicates::str::contains("7"));
 }
 
 #[test]
 fn vm_debug_flag_traces_execution() {
     mano()
-        .arg("--vm")
-        .arg("--debug")
+        .args(["--vm", "--debug"])
+        .write_stdin("42\n")
         .assert()
         .success()
-        .stdout(predicates::str::contains("OP_CONSTANT"))
-        .stdout(predicates::str::contains("OP_NEGATE"))
-        .stdout(predicates::str::contains("OP_RETURN"));
+        .stdout(predicates::str::contains("== code =="))
+        .stdout(predicates::str::contains("== trace =="))
+        .stdout(predicates::str::contains("OP_CONSTANT"));
+}
+
+#[test]
+fn vm_file_mode_works() {
+    let mut file = tempfile::NamedTempFile::new().unwrap();
+    writeln!(file, "1 + 2").unwrap();
+
+    mano()
+        .args(["--vm"])
+        .arg(file.path())
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("3"));
+}
+
+#[test]
+fn vm_reports_errors() {
+    mano()
+        .args(["--vm"])
+        .write_stdin("1 +\n")
+        .assert()
+        .failure()
+        .stderr(predicates::str::contains("Deu mole"));
 }
 
 #[test]

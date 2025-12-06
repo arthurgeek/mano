@@ -11,9 +11,11 @@
       "WebFetch(domain:docs.rs)",
       "WebFetch(domain:github.com)",
       "WebFetch(domain:raw.githubusercontent.com)",
-      "mcp__mano__translate_to_mano"
+      "mcp__mano__translate_to_mano",
     ]
   },
   "enableAllProjectMcpServers": true,
-  "enabledMcpjsonServers": []
+  "enabledMcpjsonServers": [
+    "mano"
+  ]
 }

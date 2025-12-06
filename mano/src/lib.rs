@@ -4,6 +4,7 @@ mod error;
 mod interpreter;
 mod parser;
 mod resolver;
+mod runner;
 mod scanner;
 mod token;
 mod value;
@@ -13,7 +14,8 @@ use std::io::Write;
 pub use ast::{Expr, Stmt};
 pub use error::ManoError;
 pub use parser::Parser;
-pub use scanner::{KEYWORDS, Scanner, is_identifier_char, is_identifier_start};
+pub use runner::Runner;
+pub use scanner::{KEYWORDS, Scanner, is_identifier_char};
 pub use token::{Literal, Token, TokenType};
 
 /// Native functions available in the interpreter
@@ -86,6 +88,21 @@ impl Mano {
         }
 
         errors
+    }
+}
+
+impl Runner for Mano {
+    fn run<W: Write>(&mut self, source: &str, stdout: W) -> Result<(), Vec<ManoError>> {
+        let errors = self.run(source, stdout);
+        if errors.is_empty() {
+            Ok(())
+        } else {
+            Err(errors)
+        }
+    }
+
+    fn variable_names(&self) -> Vec<String> {
+        self.variable_names()
     }
 }
 

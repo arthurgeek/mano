@@ -1,5 +1,6 @@
 use crate::error::ManoError;
 use crate::token::{Literal, Token, TokenType};
+use phf::phf_map;
 use unicode_properties::UnicodeEmoji;
 
 /// Check if a character can start an identifier
@@ -12,27 +13,27 @@ pub fn is_identifier_char(c: char) -> bool {
     c.is_alphanumeric() || c == '_' || c.is_emoji_char()
 }
 
-/// All mano keywords with their token types
-pub const KEYWORDS: &[(&str, TokenType)] = &[
-    ("bagulho", TokenType::Class),
-    ("firmeza", TokenType::True),
-    ("mestre", TokenType::Super),
-    ("nadaNão", TokenType::Nil),
-    ("oCara", TokenType::This),
-    ("oiSumida", TokenType::Print),
-    ("olhaEssaFita", TokenType::Fun),
-    ("ow", TokenType::Or),
-    ("saiFora", TokenType::Break),
-    ("salve", TokenType::Print),
-    ("seLiga", TokenType::Var),
-    ("sePá", TokenType::If),
-    ("seVira", TokenType::For),
-    ("segueOFluxo", TokenType::While),
-    ("tamoJunto", TokenType::And),
-    ("toma", TokenType::Return),
-    ("treta", TokenType::False),
-    ("vacilou", TokenType::Else),
-];
+/// All mano keywords with their token types (compile-time perfect hash map)
+pub static KEYWORDS: phf::Map<&'static str, TokenType> = phf_map! {
+    "bagulho" => TokenType::Class,
+    "firmeza" => TokenType::True,
+    "mestre" => TokenType::Super,
+    "nadaNão" => TokenType::Nil,
+    "oCara" => TokenType::This,
+    "oiSumida" => TokenType::Print,
+    "olhaEssaFita" => TokenType::Fun,
+    "ow" => TokenType::Or,
+    "saiFora" => TokenType::Break,
+    "salve" => TokenType::Print,
+    "seLiga" => TokenType::Var,
+    "sePá" => TokenType::If,
+    "seVira" => TokenType::For,
+    "segueOFluxo" => TokenType::While,
+    "tamoJunto" => TokenType::And,
+    "toma" => TokenType::Return,
+    "treta" => TokenType::False,
+    "vacilou" => TokenType::Else,
+};
 
 pub struct Scanner<'a> {
     source: &'a str,
@@ -257,10 +258,7 @@ impl<'a> Scanner<'a> {
     }
 
     fn keyword(text: &str) -> Option<TokenType> {
-        KEYWORDS
-            .iter()
-            .find(|(kw, _)| *kw == text)
-            .map(|(_, tt)| *tt)
+        KEYWORDS.get(text).copied()
     }
 
     fn number(&mut self) -> Token {

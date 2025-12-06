@@ -4,5 +4,5 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-mano = { path = "../mano" }
+mano = { version = "0.1.0", path = "../mano" }
 thiserror = "2"
